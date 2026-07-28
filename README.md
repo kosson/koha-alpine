@@ -33,7 +33,111 @@ A modern, lightweight Koha library management system runtime on Alpine Linux 3.2
 - Network connectivity for initial image build
 - A writable local clone path for Koha source (used by `SYNC_REPO`)
 
-Create the networks the nodes need to communicate running the commands: `docker network create opensearch-36_osearch` and `docker network create knonikl`.
+### Start From Zero (Layman Path)
+
+Use this path if this is your first run on a machine.
+
+#### Step 1: Choose your mode
+
+You have two valid startup modes:
+
+1. **Koha only (simpler, no OpenSearch):**
+  - Use this if you just want OPAC + Staff running first.
+  - Set `KOHA_ALPINE_ELASTICSEARCH=no` in `env/.env`.
+2. **Koha + OpenSearch (full search stack):**
+  - Use this when you also want OpenSearch/Dashboards ready.
+  - Set `KOHA_ALPINE_ELASTICSEARCH=yes` in `env/.env`.
+
+#### Step 2: One-time local preparation
+
+Run from repository root:
+
+```bash
+cd /path/to/KOHA-DOCKER-SOLUTIONS/koha-docker
+
+# Required docker networks (safe if they already exist)
+docker network create opensearch-36_osearch || true
+docker network create knonikl || true
+
+# Create your local env file
+cp env/template.env env/.env
+```
+
+Now edit `env/.env` and set at minimum:
+
+1. `SYNC_REPO` -> absolute path to your local `koha/` source folder.
+2. `KOHA_DB_ROOT_PASSWORD` -> replace template/default with your own secret.
+3. `KOHA_ALPINE_ELASTICSEARCH` -> `no` (simple mode) or `yes` (full mode).
+
+If you selected full mode (`yes`), ensure these credentials match:
+
+1. `env/.env`: `OPENSEARCH_INITIAL_ADMIN_PASSWORD`
+2. `OpenSearch-3.6/.env`: `OPENSEARCH_INITIAL_ADMIN_PASSWORD`
+
+#### Step 3: OpenSearch first-run bootstrap (only if full mode)
+
+```bash
+docker pull opensearchproject/opensearch:3.6.0
+cd OpenSearch-3.6
+
+# Ensure OpenSearch cert set is created correctly
+./opensearch_local_certificates_creator.sh
+
+# First-time cluster bring-up rehearsal
+./raise-from-ground-up.sh
+
+cd ..
+```
+
+#### Step 4: Build and start Koha stack
+
+```bash
+# Build image (first run or after Dockerfile changes)
+docker compose -f docker-compose-alpinekoha.yml build
+
+# Prepare MariaDB TLS client cert/key and auto-wire env
+./stack-alpine.sh tls-client-cert
+
+# Start full managed stack
+./stack-alpine.sh start --no-logs
+```
+
+#### Step 5: Wait, verify, then login
+
+```bash
+# Wait ~120-140 seconds, then check startup marker in logs
+docker compose -f docker-compose-alpinekoha.yml logs --tail=80 koha
+
+# Optional CGI check
+docker compose -f docker-compose-alpinekoha.yml exec -T koha httpd -M | grep cgi_module
+
+# Basic endpoint checks
+curl -I http://localhost:8080
+curl -I http://localhost:8081
+```
+
+Expected result:
+
+1. Koha log includes: `koha-testing-docker has started up and is ready to be enjoyed!`
+2. OPAC (`8080`) and Staff (`8081`) respond (typically 200/302 depending on route).
+
+Login defaults come from `env/.env`:
+
+1. Username: `KOHA_USER`
+2. Password: `KOHA_PASS`
+
+#### If you need to fully restart from zero later
+
+```bash
+# Destructive: removes containers + named volumes managed by stack
+./stack-alpine.sh reset
+
+# Then run the layman path again from Step 2
+```
+
+This removes database and OpenSearch persisted data for this workspace setup.
+
+The sections below provide deeper OpenSearch operational details and recovery notes.
 
 #### OpenSearch cluster forming details
 
@@ -58,7 +162,7 @@ The OpenSearch-3.6 folder provides you with two important scripts that help rais
 - `raise-from-ground-up.sh`, and
 - `restart-to-clear-cluster.sh`.
 
-The first should be run prior to anything else, and the second when you made some mistake and you lost track. Rememeber that this is very useful to make a wet rehersal for the OpenSearch cluster. If all is ok, bring it down with `docker compose down -v --remove-orphans`. The real creation of the cluster is on `./stack start` script job.
+The first should be run prior to anything else, and the second when you made some mistake and you lost track. Rememeber that this is very useful to make a wet rehersal for the OpenSearch cluster. If all is ok, bring it down with `docker compose down -v --remove-orphans`. The real creation of the cluster is on `./stack-alpine.sh start` script job.
 
 #### OpenSearch credential drift note (important)
 
@@ -70,7 +174,7 @@ Symptoms are usually:
 - `curl -u admin:<password>` returns 401.
 - Koha or Dashboards show auth errors even though `os01` is running.
 
-`./stack.sh start` now self-heals this case before Koha starts: it syncs Koha's `ELASTIC_OPTIONS` with `OpenSearch-3.6/.env`, probes the cluster, and reruns `initial_api_calls.sh` if OpenSearch still answers 401.
+`./stack-alpine.sh start` now self-heals this case before Koha starts: it syncs Koha's `ELASTIC_OPTIONS` with `OpenSearch-3.6/.env`, probes the cluster, and reruns `initial_api_calls.sh` if OpenSearch still answers 401.
 
 For a fully clean recovery, reset and rebuild OpenSearch from zero:
 
@@ -122,7 +226,7 @@ bash tests/test_opensearch_os01_auth_integration.sh
 
 As a rule of thumb it is wise to start the OpenSearch cluster. If it forms well, procede with the rest.
 
-### Start the Stack in 3 Steps
+### Start the Stack in 5 Steps
 
 ```bash
 cd /path/to/KOHA-DOCKER-SOLUTIONS/koha-docker
