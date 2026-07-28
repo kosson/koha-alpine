@@ -45,6 +45,8 @@ assert_contains "restore starts Traefik" "start_traefik"
 assert_contains "restore starts Koha" "start_koha"
 assert_contains "stack script probes for populated DB before no-fresh-db shortcut" 'koha_db_has_systempreferences()'
 assert_contains "stack script falls back when no-fresh-db hits an empty DB" 'falling back to fresh bootstrap'
+assert_contains "stack script checks for bootstrap completion marker" 'koha_bootstrap_marker_present()'
+assert_contains "bootstrap marker is cleared on reset" 'rm -f "${BOOTSTRAP_MARKER}"'
 
 echo ""
 echo "1..${_N}"

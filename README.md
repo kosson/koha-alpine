@@ -259,8 +259,8 @@ Alpine-specific startup profile:
 Safety notes:
 
 1. `start` without `--no-fresh-db` may recreate the Koha DB (with confirmation if data is detected).
-2. `--no-fresh-db` is only a cache-preserving shortcut for an already populated database. If the DB is empty, the script now falls back to a fresh bootstrap instead of forcing the existing-DB path.
-3. `reset` is destructive and removes containers plus named volumes.
+2. `--no-fresh-db` now checks for a successful bootstrap marker in `koha/.alpine-bootstrap-complete`. If the marker is missing, the script forces a full bootstrap on the existing DB instead of assuming the install is complete.
+3. `reset` is destructive, removes containers plus named volumes, and clears the bootstrap marker.
 4. Prefer `status` before and after operations to confirm OpenSearch/Koha health.
 
 For full options:

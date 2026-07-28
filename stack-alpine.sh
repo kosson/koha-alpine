@@ -101,6 +101,7 @@ DB_USER="koha_${KOHA_INSTANCE}"
 KOHA_PROJECT="$(basename "${KOHA_PROJECT_DIR}")"   # → koha-alpine
 DB_CONTAINER="${KOHA_PROJECT}-db-1"
 BACKUP_ROOT="${SCRIPT_DIR}/backups"
+BOOTSTRAP_MARKER="${SYNC_REPO}/.alpine-bootstrap-complete"
 
 reload_runtime_config() {
   KOHA_INSTANCE="$(_env_val "${KOHA_ENV_FILE}" KOHA_INSTANCE "${KOHA_INSTANCE}")"
@@ -424,6 +425,10 @@ koha_db_has_systempreferences() {
   [[ "${_has_systempreferences}" == "1" ]]
 }
 
+koha_bootstrap_marker_present() {
+  [[ -f "${BOOTSTRAP_MARKER}" ]]
+}
+
 # ---------------------------------------------------------------------------
 # Docker network
 # Create the frontend network. Used for the main Koha + Traefik paths.
@@ -703,6 +708,7 @@ wait_db_ready() {
 
 reset_database() {
   hdr "Recreating Koha database"
+  rm -f "${BOOTSTRAP_MARKER}" 2>/dev/null || true
   log "Dropping and recreating '${DB_NAME}'..."
   docker exec "${DB_CONTAINER}" mysql -uroot -p"${KOHA_DB_ROOT_PASSWORD}" -e "
     DROP DATABASE IF EXISTS ${DB_NAME};
@@ -1150,7 +1156,12 @@ case "${COMMAND}" in
       # skipping do_all_you_can_do.pl and leaving Auth/session setup incomplete.
       if koha_db_has_systempreferences; then
         export USE_EXISTING_DB=yes
-        log "--no-fresh-db: USE_EXISTING_DB=yes exported to Koha container"
+        if koha_bootstrap_marker_present; then
+          log "--no-fresh-db: bootstrap marker present, reusing existing DB"
+        else
+          export ALPINE_BOOTSTRAP_PROFILE=full
+          log "--no-fresh-db: bootstrap marker missing, forcing full bootstrap on existing DB"
+        fi
       else
         warn "--no-fresh-db requested, but ${DB_NAME} is still empty; falling back to fresh bootstrap."
         reset_database
@@ -1194,7 +1205,12 @@ case "${COMMAND}" in
       reset_database
     elif koha_db_has_systempreferences; then
       export USE_EXISTING_DB=yes
-      log "restart --no-fresh-db: USE_EXISTING_DB=yes exported to Koha container"
+      if koha_bootstrap_marker_present; then
+        log "restart --no-fresh-db: bootstrap marker present, reusing existing DB"
+      else
+        export ALPINE_BOOTSTRAP_PROFILE=full
+        log "restart --no-fresh-db: bootstrap marker missing, forcing full bootstrap on existing DB"
+      fi
     else
       warn "restart --no-fresh-db requested, but ${DB_NAME} is empty; falling back to fresh bootstrap."
       reset_database
@@ -1250,5 +1266,9 @@ case "${COMMAND}" in
     ;;
 
 esac
+
+if [[ "${COMMAND}" == "reset" ]]; then
+  rm -f "${BOOTSTRAP_MARKER}" 2>/dev/null || true
+fi
 
 exit 0

@@ -779,6 +779,7 @@ start_koha_service
 start_apache_service
 
 touch /ktd_ready
+touch /kohadevbox/koha/.alpine-bootstrap-complete
 echo "koha-testing-docker has started up and is ready to be enjoyed!"
 
 # start koha-reload-starman, if we have inotify installed
