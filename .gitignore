@@ -32,3 +32,6 @@ docs/TrackerBaseObsidianSpecific.base
 
 # Ignore the artifacts resulting from testing.
 tests/artifacts/
+
+# Do not put in the repo the local generated cnf and pem files
+files-alpine/mariadb-ssl/

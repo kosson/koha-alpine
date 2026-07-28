@@ -33,6 +33,95 @@ A modern, lightweight Koha library management system runtime on Alpine Linux 3.2
 - Network connectivity for initial image build
 - A writable local clone path for Koha source (used by `SYNC_REPO`)
 
+Create the networks the nodes need to communicate running the commands: `docker network create opensearch-36_osearch` and `docker network create knonikl`.
+
+#### OpenSearch cluster forming details
+
+First, bring the OpenSearch image with `docker pull opensearchproject/opensearch:3.6.0`.
+
+Second, create the necessary credential files. Run the `opensearch_local_certificates_creator.sh` script. This script will take into consideration the existing environment variables, and based on that will generate the necessary certificate files in the `./OpenSearch-3.6/assets/ssl` subfolder. At the moment of first run, the `.OpenSearch-3.6/assets/opensearch/data` subfolder will be created containing the corresponding data for each node of the cluster.
+
+The following details are useful in case you run into trouble with the OpenSearch cluster.
+If you modified the password used for OpenSearch, this meaning the values of `ELASTIC_OPTION` and as a consequence also the value of `OPENSEARCH_INITIAL_ADMIN_PASSWORD` in the `env/.env` file, you need to make sure you modify the value of `OPENSEARCH_INITIAL_ADMIN_PASSWORD` in the `.env` file in the OpenSearch-3.6 subfolder. Remember that if you have modified the password for the aforementioned environment variables you MUST run the `opensearch_local_certificates_creator.sh` script. Otherwise, the cluster is not forming. Node `os01` errors out. Create also the `OpenSearch-3.6/assets/ssl` subfolder if not found.
+
+**Warning:** do not create or replace files under `OpenSearch-3.6/assets/ssl/` manually. OpenSearch expects `root-ca.pem`, `admin.pem`, and the per-node PEM files to be regular files, not directories. If a cert path is missing when Docker Compose starts, Docker can create a directory at that path and OpenSearch will abort with an error like `.../root-ca.pem - is a directory`. Always regenerate the certificate set with `opensearch_local_certificates_creator.sh` instead of creating placeholders by hand.
+
+Requirements for a viable password for OpenSearch:
+
+- minimum length 10
+- uppercase + lowercase + digit + special character
+
+**OpenSearch password:** `OPENSEARCH_INITIAL_ADMIN_PASSWORD` in `env/.env` file and `OPENSEARCH_INITIAL_ADMIN_PASSWORD` in the `OpenSearch-3.6/.env` file must match. Both files ship with the same default value: `test@Cici24#ANA`. Verify also the `./OpenSearch-3.6/assets/dashboards/opensearch_dashboards.yml` file to hve the same password: `opensearch.password: "test@Cici24#ANA"`. Otherwise you will get into a credential drift, and your OpenSearch cluster will not form.
+
+The OpenSearch-3.6 folder provides you with two important scripts that help raising the cluster:
+
+- `raise-from-ground-up.sh`, and
+- `restart-to-clear-cluster.sh`.
+
+The first should be run prior to anything else, and the second when you made some mistake and you lost track. Rememeber that this is very useful to make a wet rehersal for the OpenSearch cluster. If all is ok, bring it down with `docker compose down -v --remove-orphans`. The real creation of the cluster is on `./stack start` script job.
+
+#### OpenSearch credential drift note (important)
+
+If `OPENSEARCH_INITIAL_ADMIN_PASSWORD` drifts between `env/.env` and `OpenSearch-3.6/.env`, OpenSearch can stay green while Basic Auth starts failing with HTTP 401. The `os01` healthcheck is certificate-based, so it will not detect this on its own.
+
+Symptoms are usually:
+
+- `tests/test_opensearch_os01_auth_integration.sh` fails.
+- `curl -u admin:<password>` returns 401.
+- Koha or Dashboards show auth errors even though `os01` is running.
+
+`./stack.sh start` now self-heals this case before Koha starts: it syncs Koha's `ELASTIC_OPTIONS` with `OpenSearch-3.6/.env`, probes the cluster, and reruns `initial_api_calls.sh` if OpenSearch still answers 401.
+
+For a fully clean recovery, reset and rebuild OpenSearch from zero:
+
+```bash
+docker pull opensearchproject/opensearch:3.6.0
+cd OpenSearch-3.6
+./raise-from-ground-up.sh
+```
+
+If you need an in-place live credential resync on an already running cluster, use:
+
+```bash
+set -a && source .env && set +a && bash initial_api_calls.sh
+docker compose up -d --force-recreate os01
+```
+
+#### Reindexing Koha records into OpenSearch
+
+If Koha shows `Records are not indexed in Elasticsearch` in the staff interface, run the rebuild from inside the Koha application container, not from the OpenSearch container:
+
+```bash
+docker exec -it <koha-container-name> bash
+koha-elasticsearch --rebuild -d -b -a <instance-name>
+```
+
+Use your actual Koha container name and instance name. For this repository the instance is commonly `kohadev`. for example `docker exec -it koha-docker-koha-1 bash` followed by `koha-elasticsearch --rebuild -d -b -a kohadev`.
+
+Keep these values aligned every time you rotate credentials:
+
+- `env/.env` -> `OPENSEARCH_INITIAL_ADMIN_PASSWORD`
+- `OpenSearch-3.6/.env` -> `OPENSEARCH_INITIAL_ADMIN_PASSWORD`
+- `env/.env` -> `ELASTIC_OPTIONS` (`<userinfo>admin:...`)
+- `OpenSearch-3.6/assets/dashboards/opensearch_dashboards.yml` -> `opensearch.password`
+
+After changing credentials, apply and refresh:
+
+```bash
+cd OpenSearch-3.6
+set -a && source .env && set +a && bash initial_api_calls.sh
+docker compose up -d --force-recreate os01
+docker compose ps os01 dashboards
+```
+
+Recommended check after you start all the services:
+
+```bash
+bash tests/test_opensearch_os01_auth_integration.sh
+```
+
+As a rule of thumb it is wise to start the OpenSearch cluster. If it forms well, procede with the rest.
+
 ### Start the Stack in 3 Steps
 
 ```bash

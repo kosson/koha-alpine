@@ -42,6 +42,8 @@ where-you-put-it/                         ← parent dir
 | `vm.max_map_count ≥ 262144` on the host | OpenSearch will not start without this; set with `sudo sysctl -w vm.max_map_count=262144` or persist in `/etc/sysctl.conf` |
 | Free ports 9200, 9600, 5601 | Verify with `ss -tlnp | grep -E '9200|9600|5601'` |
 
+Create the networks the nodes need to communicate running the commands: `docker network create opensearch-36_osearch` and `docker network create knonikl`.
+
 ---
 
 ## Scenario A — Absolute first-time setup (no data, no certs)
