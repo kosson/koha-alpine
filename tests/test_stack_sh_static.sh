@@ -43,6 +43,8 @@ assert_contains "backup uses mysqldump" 'mysqldump -uroot -p"${KOHA_DB_ROOT_PASS
 assert_contains "restore imports the dump" 'gzip -dc "${stage_dir}/database/${DB_NAME}.sql.gz"'
 assert_contains "restore starts Traefik" "start_traefik"
 assert_contains "restore starts Koha" "start_koha"
+assert_contains "stack script probes for populated DB before no-fresh-db shortcut" 'koha_db_has_systempreferences()'
+assert_contains "stack script falls back when no-fresh-db hits an empty DB" 'falling back to fresh bootstrap'
 
 echo ""
 echo "1..${_N}"

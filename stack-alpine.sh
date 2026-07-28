@@ -417,6 +417,13 @@ EOF
   log "           KOHA_DB_TLS_CLIENT_KEY=/etc/mysql/ssl/client-key.pem"
 }
 
+koha_db_has_systempreferences() {
+  local _has_systempreferences
+  _has_systempreferences="$(docker exec "${DB_CONTAINER}" mysql -uroot -p"${KOHA_DB_ROOT_PASSWORD}" \
+    --batch --skip-column-names -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${DB_NAME}' AND table_name='systempreferences';" 2>/dev/null || echo 0)"
+  [[ "${_has_systempreferences}" == "1" ]]
+}
+
 # ---------------------------------------------------------------------------
 # Docker network
 # Create the frontend network. Used for the main Koha + Traefik paths.
@@ -1123,14 +1130,7 @@ case "${COMMAND}" in
     if [[ "${FRESH_DB}" == true ]]; then
       # Warn the user if the database already contains Koha data — an accidental
       # plain 'start' after a machine reboot would silently wipe everything.
-      _existing=$(docker exec "${DB_CONTAINER}" mysql -uroot -p"${KOHA_DB_ROOT_PASSWORD}" \
-          --batch --skip-column-names \
-          -e "SELECT IF(
-                (SELECT COUNT(*) FROM information_schema.tables
-                 WHERE table_schema = '${DB_NAME}'
-                 AND table_name = 'systempreferences') > 0,
-              'yes', 'no');" 2>/dev/null || echo "no")
-      if [[ "${_existing}" == "yes" ]]; then
+      if koha_db_has_systempreferences; then
         echo ""
         warn "Database '${DB_NAME}' already contains Koha data."
         warn "Proceeding will DROP and recreate it — ALL DATA WILL BE PERMANENTLY LOST."
@@ -1143,14 +1143,18 @@ case "${COMMAND}" in
           exit 0
         fi
       fi
-      unset _existing
       reset_database
     else
-      # Tell run.sh the DB already has data — skip the probe and the fresh-install
-      # path in do_all_you_can_do.pl.  Docker Compose picks this up via the
-      # environment: section in docker-compose-alpinekoha.yml (USE_EXISTING_DB: ${USE_EXISTING_DB}).
-      export USE_EXISTING_DB=yes
-      log "--no-fresh-db: USE_EXISTING_DB=yes exported to Koha container"
+      # Tell run.sh the DB already has data only when that is actually true.
+      # On a zero-state machine, fall back to a fresh bootstrap instead of
+      # skipping do_all_you_can_do.pl and leaving Auth/session setup incomplete.
+      if koha_db_has_systempreferences; then
+        export USE_EXISTING_DB=yes
+        log "--no-fresh-db: USE_EXISTING_DB=yes exported to Koha container"
+      else
+        warn "--no-fresh-db requested, but ${DB_NAME} is still empty; falling back to fresh bootstrap."
+        reset_database
+      fi
     fi
     if [[ "${ALPINE_BOOTSTRAP_PROFILE}" == "full" ]]; then
       export RUN_DB_POPULATION_ON_EXISTING_DB=yes
@@ -1186,10 +1190,14 @@ case "${COMMAND}" in
     hdr "Quick restart (OpenSearch stays up)"
     warn "Assumes OpenSearch cluster is already running and green."
     wait_db_ready
-    [[ "${FRESH_DB}" == true ]] && reset_database
-    if [[ "${FRESH_DB}" == false ]]; then
+    if [[ "${FRESH_DB}" == true ]]; then
+      reset_database
+    elif koha_db_has_systempreferences; then
       export USE_EXISTING_DB=yes
       log "restart --no-fresh-db: USE_EXISTING_DB=yes exported to Koha container"
+    else
+      warn "restart --no-fresh-db requested, but ${DB_NAME} is empty; falling back to fresh bootstrap."
+      reset_database
     fi
     if [[ "${ALPINE_BOOTSTRAP_PROFILE}" == "full" ]]; then
       export RUN_DB_POPULATION_ON_EXISTING_DB=yes

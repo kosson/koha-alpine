@@ -214,6 +214,10 @@ Common commands:
 # Start and keep current DB contents
 ./stack-alpine.sh start --no-fresh-db
 
+# Only use --no-fresh-db when Koha has already been bootstrapped once.
+# On a zero-state machine the script now falls back to a fresh bootstrap,
+# but the default first-run flow is still the recommended path.
+
 # Start without following logs
 ./stack-alpine.sh start --no-logs
 
@@ -255,8 +259,9 @@ Alpine-specific startup profile:
 Safety notes:
 
 1. `start` without `--no-fresh-db` may recreate the Koha DB (with confirmation if data is detected).
-2. `reset` is destructive and removes containers plus named volumes.
-3. Prefer `status` before and after operations to confirm OpenSearch/Koha health.
+2. `--no-fresh-db` is only a cache-preserving shortcut for an already populated database. If the DB is empty, the script now falls back to a fresh bootstrap instead of forcing the existing-DB path.
+3. `reset` is destructive and removes containers plus named volumes.
+4. Prefer `status` before and after operations to confirm OpenSearch/Koha health.
 
 For full options:
 
