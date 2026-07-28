@@ -58,6 +58,7 @@ cd /path/to/KOHA-DOCKER-SOLUTIONS/koha-docker
 # Required docker networks (safe if they already exist)
 docker network create opensearch-36_osearch || true
 docker network create knonikl || true
+docker network create frontend || true
 
 # Create your local env file
 cp env/template.env env/.env
