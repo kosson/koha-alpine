@@ -1062,6 +1062,19 @@ Common 500 signatures and fixes:
   - Cause: incomplete/old ZOOM shim in older image layers.
   - Fix: rebuild `docker-compose-alpinekoha.yml` image to pick up current shim implementation.
 
+3. `Auth ERROR: Cannot get_session() at /kohadevbox/koha/C4/Auth.pm line 1026`
+  - Cause: `CGI::Session` cannot initialize `CGI::Session::ID::md5` because `Crypt::SysRandom` is missing in the image.
+  - Verify from inside the Koha container:
+    ```bash
+    docker compose -f docker-compose-alpinekoha.yml exec -T koha \
+      perl -MCrypt::SysRandom -e 'print "ok\n"'
+    ```
+  - Fix: rebuild and recreate Koha so the updated `Dockerfile-Alpine` layer (with `cpanm --notest Crypt::SysRandom`) is applied:
+    ```bash
+    docker compose -f docker-compose-alpinekoha.yml build koha
+    docker compose -f docker-compose-alpinekoha.yml up -d --force-recreate koha
+    ```
+
 #### Slow performance / High CPU
 
 **Check resource usage:**

@@ -106,6 +106,9 @@ RUN npm install -g yarn gulp-cli
 
 RUN cpanm --notest Modern::Perl
 
+# CGI::Session md5 ID generation requires Crypt::SysRandom at runtime.
+RUN cpanm --notest Crypt::SysRandom
+
 # Alpine 3.24 lacks a packaged Locale::PO required by Koha translator tooling.
 RUN cpanm --notest Locale::PO
 
