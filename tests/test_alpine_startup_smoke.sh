@@ -8,7 +8,7 @@
 # - prints compact diagnostics on failure
 #
 # Usage:
-#   cd koha-docker
+#   cd koha-alpine
 #   bash tests/test_alpine_startup_smoke.sh
 #
 # Exit code: 0 = pass, 1 = fail, 2 = prerequisites missing.
@@ -18,6 +18,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 COMPOSE_FILE="${REPO_ROOT}/docker-compose-alpinekoha.yml"
+ENV_FILE="${REPO_ROOT}/env/.env"
+KOHA_INSTANCE="$(grep -E '^KOHA_INSTANCE=' "${ENV_FILE}" | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'" || true)"
+KOHA_INSTANCE="${KOHA_INSTANCE:-kohadev}"
 MAX_WAIT=${MAX_WAIT:-90}
 
 PASS=0
@@ -37,7 +40,7 @@ not_ok() {
 }
 
 compose() {
-    docker compose -f "${COMPOSE_FILE}" "$@"
+    docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" --project-directory "${REPO_ROOT}" "$@"
 }
 
 echo "TAP version 14"
@@ -119,7 +122,7 @@ if [[ ${FAIL} -gt 0 ]]; then
     echo "# diagnostics: recent koha logs"
     compose logs --tail=80 koha | sed 's/^/# /'
     echo "# diagnostics: opac/intranet error logs"
-    compose exec -T koha sh -lc 'tail -n 60 /var/log/koha/kohadev/opac-error.log 2>/dev/null; echo "---"; tail -n 60 /var/log/koha/kohadev/intranet-error.log 2>/dev/null' | sed 's/^/# /'
+    compose exec -T koha sh -lc "tail -n 60 /var/log/koha/${KOHA_INSTANCE}/opac-error.log 2>/dev/null; echo '---'; tail -n 60 /var/log/koha/${KOHA_INSTANCE}/intranet-error.log 2>/dev/null" | sed 's/^/# /'
 fi
 
 echo ""

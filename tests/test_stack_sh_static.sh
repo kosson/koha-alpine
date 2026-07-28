@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # tests/test_stack_sh_static.sh
 #
-# Static checks for stack.sh backup/restore support.
+# Static checks for stack-alpine.sh backup/restore support.
 # No Docker required.
 
 set -euo pipefail
 
-STACK_SH="$(cd "$(dirname "$0")/.." && pwd)/stack.sh"
+STACK_SH="$(cd "$(dirname "$0")/.." && pwd)/stack-alpine.sh"
 
 PASS=0; FAIL=0; _N=0
 ok() {
@@ -29,7 +29,7 @@ assert_contains() {
 }
 
 echo "TAP version 14"
-echo "# Static checks on stack.sh backup/restore support"
+echo "# Static checks on stack-alpine.sh backup/restore support"
 echo ""
 
 assert_contains "help mentions backup command" "backup      Create a tar.gz backup bundle for env files + MariaDB data"

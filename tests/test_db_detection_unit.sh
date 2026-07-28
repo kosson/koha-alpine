@@ -4,7 +4,7 @@
 # Unit tests for the DB auto-detection logic that guards the
 # "Database is not empty!" error in do_all_you_can_do.pl.
 #
-# The detection logic is embedded inline (matching files/run.sh exactly) and
+# The detection logic is embedded inline (matching files-alpine/run.sh exactly) and
 # tested with a fake `mysql` command so no real database is needed.
 #
 # Exit code: 0 = all tests passed, 1 = at least one failure.
@@ -22,14 +22,11 @@ TMPDIR=$(mktemp -d)
 trap 'rm -rf "${TMPDIR}"' EXIT
 
 # ── Detection function ────────────────────────────────────────────────────────
-# This is a direct port of the detection block from files/run.sh.
+# This is a direct port of the detection block from files-alpine/run.sh.
 # Keep it in sync with the source whenever run.sh changes.
 # Its only external dependency is the `mysql` binary (replaced by a fake in tests).
 detect_existing_db() {
     local use_existing_db="${1:-}"   # pre-set value (may be empty or "yes")
-    local db_hostname="testhost"
-    local db_user="testuser"
-    local db_password="testpass"
     local db_name="koha_kohadev"
 
     local use_existing_db_flag=""
@@ -37,15 +34,12 @@ detect_existing_db() {
     if [ "${use_existing_db}" != "yes" ]; then
         local _db_populated
         _db_populated=$(mysql \
-            --host="${db_hostname}" \
-            --user="${db_user}" \
-            --password="${db_password}" \
+            --defaults-file=/etc/mysql/koha-common.cnf \
             --batch --skip-column-names \
-            "${db_name}" \
             -e "SELECT IF(
                   (SELECT COUNT(*) FROM information_schema.tables
-                   WHERE table_schema = DATABASE()
-                   AND table_name IN ('systempreferences','borrowers')) > 0,
+                   WHERE table_schema = '${db_name}'
+                   AND table_name = 'systempreferences') > 0,
                 'yes', 'no');" 2>/dev/null || echo "no")
         if [ "${_db_populated:-no}" = "yes" ]; then
             use_existing_db="yes"
@@ -78,7 +72,7 @@ run_case() {
 
 # ─────────────────────────────────────────────────────────────────────────────
 echo "TAP version 14"
-echo "# Unit tests — DB auto-detection logic (mock mysql)"
+echo "# Unit tests — Alpine DB auto-detection logic (mock mysql)"
 echo ""
 
 # ── Test 1: empty DB → USE_EXISTING_DB stays empty, flag stays empty ─────────

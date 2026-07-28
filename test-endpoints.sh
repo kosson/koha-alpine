@@ -11,7 +11,14 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 COMPOSE_FILE="docker-compose-alpinekoha.yml"
-KOHA_CONTAINER="koha-docker-koha-1"
+ENV_FILE="env/.env"
+PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
+KOHA_INSTANCE=$(grep -E '^KOHA_INSTANCE=' "${PROJECT_DIR}/${ENV_FILE}" | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'" || true)
+KOHA_INSTANCE="${KOHA_INSTANCE:-kohadev}"
+
+compose() {
+    docker compose -f "${PROJECT_DIR}/${COMPOSE_FILE}" --env-file "${PROJECT_DIR}/${ENV_FILE}" --project-directory "${PROJECT_DIR}" "$@"
+}
 
 echo -e "${BLUE}==================================================================${NC}"
 echo -e "${BLUE}Koha Alpine Docker Endpoint Test Suite${NC}"
@@ -20,7 +27,7 @@ echo
 
 # Test 1: Container Status
 echo -e "${YELLOW}[TEST 1] Checking container status...${NC}"
-if docker compose -f "${COMPOSE_FILE}" ps | grep -q "${KOHA_CONTAINER}.*Up"; then
+if compose ps --status running koha 2>/dev/null | grep -q "running\|Up"; then
     echo -e "${GREEN}✓ Container is running${NC}"
 else
     echo -e "${RED}✗ Container is not running${NC}"
@@ -30,7 +37,7 @@ echo
 
 # Test 2: Apache Module Status
 echo -e "${YELLOW}[TEST 2] Verifying mod_cgi is loaded...${NC}"
-if docker compose -f "${COMPOSE_FILE}" exec koha httpd -M 2>/dev/null | grep -q "cgi_module"; then
+if compose exec -T koha httpd -M 2>/dev/null | grep -q "cgi_module"; then
     echo -e "${GREEN}✓ mod_cgi module is loaded${NC}"
 else
     echo -e "${RED}✗ mod_cgi module is NOT loaded${NC}"
@@ -40,18 +47,18 @@ echo
 
 # Test 3: Apache Syntax Validation
 echo -e "${YELLOW}[TEST 3] Validating Apache configuration syntax...${NC}"
-if docker compose -f "${COMPOSE_FILE}" exec koha httpd -t 2>&1 | grep -q "Syntax OK"; then
+if compose exec -T koha httpd -t 2>&1 | grep -q "Syntax OK"; then
     echo -e "${GREEN}✓ Apache configuration syntax is valid${NC}"
 else
     echo -e "${RED}✗ Apache configuration has syntax errors${NC}"
-    docker compose -f "${COMPOSE_FILE}" exec koha httpd -t 2>&1
+    compose exec -T koha httpd -t 2>&1
     exit 1
 fi
 echo
 
 # Test 4: Check CGI Handler Directives in OPAC Config
 echo -e "${YELLOW}[TEST 4] Verifying CGI directives in OPAC config...${NC}"
-OPAC_CONFIG=$(docker compose -f "${COMPOSE_FILE}" exec koha cat /etc/koha/apache-shared-opac-git.conf 2>/dev/null)
+OPAC_CONFIG=$(compose exec -T koha cat /etc/koha/apache-shared-opac-git.conf 2>/dev/null)
 if echo "$OPAC_CONFIG" | grep -A 3 'Directory "/kohadevbox/koha"' | grep -q "Options.*ExecCGI"; then
     echo -e "${GREEN}✓ OPAC config has 'Options +ExecCGI'${NC}"
 else
@@ -68,7 +75,7 @@ echo
 
 # Test 5: Check CGI Handler Directives in Intranet Config
 echo -e "${YELLOW}[TEST 5] Verifying CGI directives in Intranet config...${NC}"
-INTRANET_CONFIG=$(docker compose -f "${COMPOSE_FILE}" exec koha cat /etc/koha/apache-shared-intranet-git.conf 2>/dev/null)
+INTRANET_CONFIG=$(compose exec -T koha cat /etc/koha/apache-shared-intranet-git.conf 2>/dev/null)
 if echo "$INTRANET_CONFIG" | grep -A 3 'Directory "/kohadevbox/koha"' | grep -q "Options.*ExecCGI"; then
     echo -e "${GREEN}✓ Intranet config has 'Options +ExecCGI'${NC}"
 else
@@ -209,7 +216,7 @@ echo
 
 # Test 14: Check Apache error logs for CGI execution errors
 echo -e "${YELLOW}[TEST 14] Checking Apache error logs for CGI execution issues...${NC}"
-ERROR_LOG=$(docker compose -f "${COMPOSE_FILE}" exec koha tail -n 50 /var/log/koha/kohadev/opac-error.log 2>/dev/null)
+ERROR_LOG=$(compose exec -T koha tail -n 50 "/var/log/koha/${KOHA_INSTANCE}/opac-error.log" 2>/dev/null)
 if echo "$ERROR_LOG" | grep -q "\[cgi:error\]"; then
     echo -e "${GREEN}✓ Apache is executing CGI scripts (cgi:error messages present)${NC}"
     echo "Sample CGI error log entries:"
@@ -243,7 +250,7 @@ echo
 
 # Test 16: Check file permissions
 echo -e "${YELLOW}[TEST 16] Checking Koha configuration file permissions...${NC}"
-KOHA_CONF_PERMS=$(docker compose -f "${COMPOSE_FILE}" exec koha stat -c "%a" /etc/koha/sites/kohadev/koha-conf.xml 2>/dev/null)
+KOHA_CONF_PERMS=$(compose exec -T koha stat -c "%a" "/etc/koha/sites/${KOHA_INSTANCE}/koha-conf.xml" 2>/dev/null)
 echo "koha-conf.xml permissions: $KOHA_CONF_PERMS"
 if [ "$KOHA_CONF_PERMS" = "644" ] || [ "$KOHA_CONF_PERMS" = "666" ]; then
     echo -e "${GREEN}✓ koha-conf.xml is world-readable${NC}"
@@ -254,11 +261,11 @@ echo
 
 # Test 17: Check Apache process and listening ports
 echo -e "${YELLOW}[TEST 17] Verifying Apache is listening on configured ports...${NC}"
-if docker compose -f "${COMPOSE_FILE}" exec koha netstat -tuln 2>/dev/null | grep -q ":8080\|:8081"; then
+if compose exec -T koha netstat -tuln 2>/dev/null | grep -q ":8080\|:8081"; then
     echo -e "${GREEN}✓ Apache is listening on OPAC/Intranet ports${NC}"
 else
     echo -e "${YELLOW}! Checking with ss instead...${NC}"
-    if docker compose -f "${COMPOSE_FILE}" exec koha ss -tuln 2>/dev/null | grep -q ":8080\|:8081"; then
+    if compose exec -T koha ss -tuln 2>/dev/null | grep -q ":8080\|:8081"; then
         echo -e "${GREEN}✓ Apache is listening on OPAC/Intranet ports${NC}"
     else
         echo -e "${YELLOW}! Could not verify listening ports${NC}"

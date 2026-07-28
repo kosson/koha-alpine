@@ -7,14 +7,13 @@
 # - stores individual logs and prints a final stable summary
 #
 # Usage:
-#   cd koha-docker
+#   cd koha-alpine
 #   bash tests/run_integration_deterministic.sh
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-LEGACY_COMPOSE="${REPO_ROOT}/docker-compose.yml"
 ALPINE_COMPOSE="${REPO_ROOT}/docker-compose-alpinekoha.yml"
 ENV_FILE="${REPO_ROOT}/env/.env"
 
@@ -44,10 +43,6 @@ ok()   { echo -e "${GREEN}[$(date +%H:%M:%S)]${RESET} $*"; }
 warn() { echo -e "${YELLOW}[$(date +%H:%M:%S)]${RESET} $*"; }
 err()  { echo -e "${RED}[$(date +%H:%M:%S)]${RESET} $*"; }
 
-legacy_compose() {
-    docker compose -f "${LEGACY_COMPOSE}" --env-file "${ENV_FILE}" --project-directory "${REPO_ROOT}" "$@"
-}
-
 alpine_compose() {
     docker compose -f "${ALPINE_COMPOSE}" --env-file "${ENV_FILE}" --project-directory "${REPO_ROOT}" "$@"
 }
@@ -57,7 +52,7 @@ wait_for_systempreferences() {
     local elapsed=0
 
     while (( elapsed < max_wait )); do
-        if legacy_compose exec -T db sh -lc "mysql -uroot -p\"${DB_PASS}\" -Nse \"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${DB_NAME}' AND table_name='systempreferences';\"" 2>/dev/null | grep -qx '1'; then
+        if alpine_compose exec -T db sh -lc "mysql -uroot -p\"${DB_PASS}\" -Nse \"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${DB_NAME}' AND table_name='systempreferences';\"" 2>/dev/null | grep -qx '1'; then
             return 0
         fi
         sleep 5
@@ -67,17 +62,15 @@ wait_for_systempreferences() {
     return 1
 }
 
-bootstrap_legacy_populated_db() {
-    log "Preparing legacy stack with populated database for restart/authority tests"
-    # Force non-ES bootstrap in this preparation phase so population is not
-    # blocked by unavailable OpenSearch in local CI/dev environments.
-    KOHA_ELASTICSEARCH=no legacy_compose up -d db memcached koha >/dev/null
+bootstrap_alpine_populated_db() {
+    log "Preparing Alpine stack with populated database for restart/authority tests"
+    alpine_compose up -d db memcached rabbitmq koha >/dev/null
 
     if wait_for_systempreferences 480; then
-        ok "Legacy DB is populated (${DB_NAME}.systempreferences exists)"
+        ok "Alpine DB is populated (${DB_NAME}.systempreferences exists)"
     else
-        err "Legacy DB was not populated in time"
-        legacy_compose logs --tail=120 koha | sed 's/^/[legacy-koha] /' || true
+        err "Alpine DB was not populated in time"
+        alpine_compose logs --tail=120 koha | sed 's/^/[alpine-koha] /' || true
         return 1
     fi
 }
@@ -153,10 +146,10 @@ main() {
     # Phase 1: DB readiness race test (self-isolates with down -v)
     run_test "${SCRIPT_DIR}/test_mariadb_auth_readiness_integration.sh"
 
-    # Phase 2: Populate legacy DB so restart + authority tests run deterministically
-    bootstrap_legacy_populated_db || FAILED=$(( FAILED + 1 ))
+    # Phase 2: Populate Alpine DB so restart + authority tests run deterministically
+    bootstrap_alpine_populated_db || FAILED=$(( FAILED + 1 ))
 
-    # Phase 3: Legacy integration tests that require populated DB
+    # Phase 3: Alpine integration tests that require populated DB
     run_test "${SCRIPT_DIR}/test_restart_integration.sh"
     run_test "${SCRIPT_DIR}/test_authority_groupby_sqlmode_integration.sh"
 

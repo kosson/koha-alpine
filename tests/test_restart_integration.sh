@@ -5,7 +5,7 @@
 # persistent database does NOT fail with "Database is not empty!".
 #
 # Prerequisites
-#   - A running stack (./stack.sh start or docker compose up -d has been run)
+#   - A running stack (./stack-alpine.sh start or docker compose up -d has been run)
 #   - The koha-db-data volume must be populated (i.e. Koha has been set up)
 #   - Docker must be accessible from the current user
 #
@@ -22,7 +22,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-COMPOSE_FILE="${REPO_ROOT}/docker-compose.yml"
+COMPOSE_FILE="${REPO_ROOT}/docker-compose-alpinekoha.yml"
 ENV_FILE="${REPO_ROOT}/env/.env"
 MAX_WAIT=${MAX_WAIT:-300}   # seconds to wait for Koha to finish re-initialising
 
@@ -65,7 +65,7 @@ fi
 
 # ── Prerequisite: DB container running ───────────────────────────────────────
 if ! compose ps --status running db 2>/dev/null | grep -q "running\|Up"; then
-    skip "DB container is running" "stack is not started — run ./stack.sh start first"
+    skip "DB container is running" "stack is not started — run ./stack-alpine.sh start first"
     skip "Koha container restart succeeds" "stack is not started"
     skip "Container does not exit with code 255" "stack is not started"
     echo ""
@@ -159,8 +159,8 @@ fi
 # ── Cleanup note ─────────────────────────────────────────────────────────────
 echo ""
 echo "# NOTE: the stack was restarted but NOT reset."
-echo "# Run './stack.sh start' to get a fresh database, or"
-echo "# './stack.sh start --no-fresh-db' to keep the current data."
+echo "# Run './stack-alpine.sh start' to get a fresh database, or"
+echo "# './stack-alpine.sh start --no-fresh-db' to keep the current data."
 
 # ── Summary ──────────────────────────────────────────────────────────────────
 echo ""

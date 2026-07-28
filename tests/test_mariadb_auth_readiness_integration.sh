@@ -10,7 +10,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-COMPOSE_FILE="${REPO_ROOT}/docker-compose.yml"
+COMPOSE_FILE="${REPO_ROOT}/docker-compose-alpinekoha.yml"
 ENV_FILE="${REPO_ROOT}/env/.env"
 DB_CONTAINER="$(basename "${REPO_ROOT}")-db-1"
 MAX_WAIT=${MAX_WAIT:-120}

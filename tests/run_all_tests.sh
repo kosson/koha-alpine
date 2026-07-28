@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # tests/run_all_tests.sh
 #
-# Runs every test suite in this directory in order:
+# Runs the default Alpine test suites in order:
 #   1. Static analysis  (no Docker needed)
 #   2. Unit tests       (no Docker needed)
-#   3. Integration test (requires running stack — skipped automatically if not up)
+#   3. Safe integration tests (require Docker; destructive DB race test is excluded)
 #
 # Usage:
-#   cd koha-docker
+#   cd koha-alpine
 #   bash tests/run_all_tests.sh
 #
 # Exit code: 0 = all tests passed/skipped, 1 = at least one test failed.
@@ -29,14 +29,18 @@ SUITES=(
     "${TESTS_DIR}/test_run_sh_static.sh"
     "${TESTS_DIR}/test_db_detection_unit.sh"
     "${TESTS_DIR}/test_restart_integration.sh"
+    "${TESTS_DIR}/test_authority_groupby_sqlmode_integration.sh"
+    "${TESTS_DIR}/test_opensearch_os01_auth_integration.sh"
     "${TESTS_DIR}/test_alpine_startup_smoke.sh"
 )
 
 SUITE_LABELS=(
-    "Static analysis         (stack.sh backup/restore)"
-    "Static analysis         (files/run.sh)"
+    "Static analysis         (stack-alpine backup/restore)"
+    "Static analysis         (files-alpine/run.sh)"
     "Unit tests              (mock mysql)"
     "Integration test        (Docker restart)"
+    "Integration test        (authority SQL mode guard)"
+    "Integration test        (OpenSearch os01 auth)"
     "Integration smoke       (Alpine startup/runtime)"
 )
 
@@ -76,7 +80,7 @@ run_suite() {
 
 echo -e "${BOLD}"
 echo "╔══════════════════════════════════════════════════════════════╗"
-echo "║  Koha-Docker test suite — restart + backup/restore checks    ║"
+echo "║  docker-alpine test suite — Alpine runtime checks            ║"
 echo "╚══════════════════════════════════════════════════════════════╝"
 echo -e "${RESET}"
 

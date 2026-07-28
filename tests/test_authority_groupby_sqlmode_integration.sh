@@ -10,12 +10,13 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-COMPOSE_FILE="${REPO_ROOT}/docker-compose.yml"
+COMPOSE_FILE="${REPO_ROOT}/docker-compose-alpinekoha.yml"
 ENV_FILE="${REPO_ROOT}/env/.env"
 DB_CONTAINER="$(basename "${REPO_ROOT}")-db-1"
 KOHA_CONTAINER="$(basename "${REPO_ROOT}")-koha-1"
 KOHA_INSTANCE="$(grep -E '^KOHA_INSTANCE=' "${ENV_FILE}" | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'" || true)"
 KOHA_INSTANCE="${KOHA_INSTANCE:-kohadev}"
+DB_NAME="koha_${KOHA_INSTANCE}"
 
 PASS=0; FAIL=0; _N=0
 ok()     { _N=$(( _N + 1 )); echo "ok ${_N} - $1"; PASS=$(( PASS + 1 )); }
@@ -55,9 +56,26 @@ QUERY="select count(*),auth_tag_structure.authtypecode,authtypetext from auth_ta
 STRICT_MODE="ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION"
 NON_STRICT_MODE="IGNORE_SPACE,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION"
 
+required_tables=$(docker exec "${DB_CONTAINER}" sh -lc \
+  "mysql -uroot -p\"${DB_PASS}\" -Nse \"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${DB_NAME}' AND table_name IN ('auth_tag_structure','auth_types');\"" \
+  2>/dev/null || echo 0)
+
+if [[ "${required_tables:-0}" -lt 2 ]]; then
+  skip "authority tables are populated" "${DB_NAME} is not fully installed yet"
+  skip "Legacy authority query should fail under ONLY_FULL_GROUP_BY" "authority tables missing"
+  skip "Legacy authority query succeeds under non-strict app mode" "authority tables missing"
+  skip "koha-conf template strict_sql_modes guard" "authority tables missing"
+  skip "live koha instance config check" "authority tables missing"
+  echo ""
+  echo "1..${_N}"
+  echo "# Skipped: Koha schema is not fully populated"
+  exit 0
+fi
+ok "authority tables are populated"
+
 # 1) Strict mode must fail with this legacy query shape.
 if docker exec "${DB_CONTAINER}" sh -lc \
-  "mysql -uroot -p\"${DB_PASS}\" koha_kohadev -Nse \"SET SESSION sql_mode='${STRICT_MODE}'; ${QUERY};\"" \
+  "mysql -uroot -p\"${DB_PASS}\" ${DB_NAME} -Nse \"SET SESSION sql_mode='${STRICT_MODE}'; ${QUERY};\"" \
   >/tmp/authority_groupby_strict.out 2>/tmp/authority_groupby_strict.err; then
   not_ok "Legacy authority query should fail under ONLY_FULL_GROUP_BY"
 else
@@ -70,7 +88,7 @@ fi
 
 # 2) Non-strict mode must pass without source modifications.
 if docker exec "${DB_CONTAINER}" sh -lc \
-  "mysql -uroot -p\"${DB_PASS}\" koha_kohadev -Nse \"SET SESSION sql_mode='${NON_STRICT_MODE}'; ${QUERY};\"" \
+  "mysql -uroot -p\"${DB_PASS}\" ${DB_NAME} -Nse \"SET SESSION sql_mode='${NON_STRICT_MODE}'; ${QUERY};\"" \
   >/tmp/authority_groupby_nonstrict.out 2>/tmp/authority_groupby_nonstrict.err; then
   ok "Legacy authority query succeeds under non-strict app mode"
 else
@@ -78,7 +96,7 @@ else
 fi
 
 # 3) Stack template should keep strict_sql_modes disabled to avoid runtime regression.
-if grep -q '<strict_sql_modes>0</strict_sql_modes>' "${REPO_ROOT}/files/templates/koha-conf-site.xml.in"; then
+if grep -q '<strict_sql_modes>0</strict_sql_modes>' "${REPO_ROOT}/files-alpine/templates/koha-conf-site.xml.in"; then
   ok "koha-conf template has strict_sql_modes disabled"
 else
   not_ok "koha-conf template should set strict_sql_modes to 0"

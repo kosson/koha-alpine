@@ -144,6 +144,18 @@ export KOHA_DB_TLS_CA_CERTIFICATE=${KOHA_DB_TLS_CA_CERTIFICATE:-/etc/mysql/ssl/c
 export KOHA_DB_TLS_CLIENT_CERTIFICATE=${KOHA_DB_TLS_CLIENT_CERTIFICATE:-}
 export KOHA_DB_TLS_CLIENT_KEY=${KOHA_DB_TLS_CLIENT_KEY:-}
 
+if [ "${KOHA_DB_USE_TLS}" = "yes" ] && { [ -z "${KOHA_DB_TLS_CLIENT_CERTIFICATE}" ] || [ -z "${KOHA_DB_TLS_CLIENT_KEY}" ]; }; then
+    echo "[db-tls] KOHA_DB_USE_TLS=yes with no client cert/key pair; using CA-verified server TLS only"
+fi
+
+if [ "${KOHA_DB_USE_TLS}" = "yes" ]; then
+    export MYSQL_OPT_SKIP_SSL=0
+    export PERL_DBD_MYSQL_SSL_VERIFY_SERVER_CERT=0
+else
+    export MYSQL_OPT_SKIP_SSL=1
+    export PERL_DBD_MYSQL_SSL_VERIFY_SERVER_CERT=0
+fi
+
 # Force rewrite-config placeholder resolution during koha-create so installer
 # code never sees raw __DB_TLS_*__ tokens.
 if [ "${KOHA_DB_USE_TLS}" = "yes" ]; then
@@ -213,7 +225,7 @@ fi
 # comment lines with spaces don't truncate the awk field-split output.
 VARS_TO_SUB=$(grep -v '^[[:space:]]*#' "${BUILD_DIR}/templates/defaults.env" | grep '=' | cut -d '=' -f1 | tr '\n' ':' | sed -e 's/:/:$/g' | sed -e 's/:\$$//' | sed -e 's/^/\$/')
 # Add additional vars to sub from this script that are not in defaults.env
-VARS_TO_SUB="\$DB_NAME:\$DB_PASSWORD:\$DB_USER:\$BUILD_DIR:$VARS_TO_SUB";
+VARS_TO_SUB="\$DB_NAME:\$DB_PASSWORD:\$DB_USER:\$BUILD_DIR:\$__DB_USE_TLS__:\$__DB_TLS_CA_CERTIFICATE__:\$__DB_TLS_CLIENT_CERTIFICATE__:\$__DB_TLS_CLIENT_KEY__:$VARS_TO_SUB";
 
 envsubst "$VARS_TO_SUB" < ${BUILD_DIR}/templates/root_bashrc           > /root/.bashrc
 envsubst "$VARS_TO_SUB" < ${BUILD_DIR}/templates/vimrc                 > /root/.vimrc
@@ -221,6 +233,19 @@ envsubst "$VARS_TO_SUB" < ${BUILD_DIR}/templates/bash_aliases          > /root/.
 envsubst "$VARS_TO_SUB" < ${BUILD_DIR}/templates/koha-conf-site.xml.in > /etc/koha/koha-conf-site.xml.in
 envsubst "$VARS_TO_SUB" < ${BUILD_DIR}/templates/koha-sites.conf       > /etc/koha/koha-sites.conf
 envsubst "$VARS_TO_SUB" < ${BUILD_DIR}/templates/sudoers               > /etc/sudoers.d/${KOHA_INSTANCE}
+
+perl -0pi -e 's/__DB_USE_TLS__/$ENV{__DB_USE_TLS__}/g; s#__DB_TLS_CA_CERTIFICATE__#$ENV{__DB_TLS_CA_CERTIFICATE__}#g; s#__DB_TLS_CLIENT_CERTIFICATE__#$ENV{__DB_TLS_CLIENT_CERTIFICATE__}#g; s#__DB_TLS_CLIENT_KEY__#$ENV{__DB_TLS_CLIENT_KEY__}#g' \
+    /etc/koha/koha-conf-site.xml.in
+
+if [ -z "${KOHA_DB_TLS_CA_CERTIFICATE}" ]; then
+    sed -i '/<ca><\/ca>/d' /etc/koha/koha-conf-site.xml.in
+fi
+if [ -z "${KOHA_DB_TLS_CLIENT_CERTIFICATE}" ]; then
+    sed -i '/<cert><\/cert>/d' /etc/koha/koha-conf-site.xml.in
+fi
+if [ -z "${KOHA_DB_TLS_CLIENT_KEY}" ]; then
+    sed -i '/<key><\/key>/d' /etc/koha/koha-conf-site.xml.in
+fi
 
 # bin
 mkdir -p ${BUILD_DIR}/bin

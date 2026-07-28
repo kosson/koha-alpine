@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tests/test_run_sh_static.sh
 #
-# Static analysis tests for files/run.sh.
+# Static analysis tests for files-alpine/run.sh.
 # No Docker, no database, no network required.
 # Every assertion verifies that the fix for the "Database is not empty!" restart
 # bug (do_all_you_can_do.pl line 89) is correctly present in the source file.
@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-RUN_SH="$(cd "$(dirname "$0")/.." && pwd)/files/run.sh"
+RUN_SH="$(cd "$(dirname "$0")/.." && pwd)/files-alpine/run.sh"
 
 # ── tiny TAP-style helper ────────────────────────────────────────────────────
 PASS=0; FAIL=0; _N=0
@@ -43,7 +43,7 @@ assert_not_contains() {
 # ─────────────────────────────────────────────────────────────────────────────
 
 echo "TAP version 14"
-echo "# Static checks on files/run.sh"
+echo "# Static checks on files-alpine/run.sh"
 echo "# Verifying the 'Database is not empty!' restart fix"
 echo ""
 

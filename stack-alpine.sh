@@ -25,6 +25,7 @@ KOHA_COMPOSE_FILE="${SCRIPT_DIR}/docker-compose-alpinekoha.yml"
 KOHA_ENV_FILE="${SCRIPT_DIR}/env/.env"
 KOHA_PROJECT_DIR="${SCRIPT_DIR}"
 KOHA_DEFAULT_REPO_URL="https://git.koha-community.org/Koha-community/Koha.git"
+MARIADB_SSL_DIR="${SCRIPT_DIR}/files-alpine/mariadb-ssl"
 
 # ---------------------------------------------------------------------------
 # Colour helpers
@@ -52,6 +53,18 @@ _env_val() {
   local val
   val=$(grep -E "^${key}=" "${file}" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"'"'" || true)
   echo "${val:-${default}}"
+}
+
+_set_env_val() {
+  # Usage: _set_env_val FILE KEY VALUE
+  local file="$1" key="$2" value="$3"
+  local esc
+  esc="$(printf '%s' "${value}" | sed 's/[\/&]/\\&/g')"
+  if grep -qE "^${key}=" "${file}" 2>/dev/null; then
+    sed -i "s#^${key}=.*#${key}=${esc}#" "${file}"
+  else
+    printf "%s=%s\n" "${key}" "${value}" >> "${file}"
+  fi
 }
 
 KOHA_INSTANCE="$(_env_val "${KOHA_ENV_FILE}" KOHA_INSTANCE kohadev)"
@@ -85,7 +98,7 @@ KOHA_TRANSLATIONS_REINSTALL="$(_env_val "${KOHA_ENV_FILE}" KOHA_TRANSLATIONS_REI
 
 DB_NAME="koha_${KOHA_INSTANCE}"
 DB_USER="koha_${KOHA_INSTANCE}"
-KOHA_PROJECT="$(basename "${KOHA_PROJECT_DIR}")"   # → koha-docker
+KOHA_PROJECT="$(basename "${KOHA_PROJECT_DIR}")"   # → koha-alpine
 DB_CONTAINER="${KOHA_PROJECT}-db-1"
 BACKUP_ROOT="${SCRIPT_DIR}/backups"
 
@@ -347,6 +360,61 @@ ensure_koha_source() {
   esac
 
   ok "Koha source prepared at ${repo_dir}"
+}
+
+prepare_mariadb_client_tls() {
+  hdr "Preparing MariaDB client TLS materials"
+
+  command -v openssl >/dev/null 2>&1 || die "openssl not found in PATH"
+
+  local ca_cert ca_key ca_srl client_key client_csr client_cert client_ext
+  ca_cert="${MARIADB_SSL_DIR}/ca-cert.pem"
+  ca_key="${MARIADB_SSL_DIR}/ca-key.pem"
+  ca_srl="${MARIADB_SSL_DIR}/ca-cert.srl"
+  client_key="${MARIADB_SSL_DIR}/client-key.pem"
+  client_csr="${MARIADB_SSL_DIR}/client.csr"
+  client_cert="${MARIADB_SSL_DIR}/client-cert.pem"
+  client_ext="${MARIADB_SSL_DIR}/client-ext.cnf"
+
+  [[ -f "${ca_cert}" ]] || die "Missing CA certificate: ${ca_cert}"
+  [[ -f "${ca_key}" ]] || die "Missing CA private key: ${ca_key}"
+
+  mkdir -p "${MARIADB_SSL_DIR}"
+
+  if [[ "${FORCE_CLIENT_TLS_REGEN}" != true ]] && [[ -f "${client_key}" && -f "${client_cert}" ]]; then
+    ok "Client TLS cert/key already present. Reusing existing files."
+  else
+    log "Generating client TLS key/certificate signed by ${ca_cert}"
+    cat > "${client_ext}" <<'EOF'
+extendedKeyUsage = clientAuth
+keyUsage = digitalSignature,keyEncipherment
+subjectAltName = DNS:koha,IP:127.0.0.1
+EOF
+    openssl genrsa -out "${client_key}" 2048 >/dev/null 2>&1
+    openssl req -new -key "${client_key}" -subj "/CN=koha-client" -out "${client_csr}" >/dev/null 2>&1
+    openssl x509 -req \
+      -in "${client_csr}" \
+      -CA "${ca_cert}" \
+      -CAkey "${ca_key}" \
+      -CAserial "${ca_srl}" \
+      -out "${client_cert}" \
+      -days 3650 \
+      -sha256 \
+      -extfile "${client_ext}" >/dev/null 2>&1
+    rm -f "${client_csr}"
+    ok "Client TLS certificate generated."
+  fi
+
+  # Readable by Apache CGI inside read-only bind mount.
+  chmod 644 "${client_key}" "${client_cert}" "${client_ext}" 2>/dev/null || true
+
+  _set_env_val "${KOHA_ENV_FILE}" "KOHA_DB_TLS_CLIENT_CERTIFICATE" "/etc/mysql/ssl/client-cert.pem"
+  _set_env_val "${KOHA_ENV_FILE}" "KOHA_DB_TLS_CLIENT_KEY" "/etc/mysql/ssl/client-key.pem"
+  reload_runtime_config
+
+  ok "Configured env/.env for Koha DB client TLS cert/key."
+  log "Values set: KOHA_DB_TLS_CLIENT_CERTIFICATE=/etc/mysql/ssl/client-cert.pem"
+  log "           KOHA_DB_TLS_CLIENT_KEY=/etc/mysql/ssl/client-key.pem"
 }
 
 # ---------------------------------------------------------------------------
@@ -888,6 +956,8 @@ ${BOLD}Commands:${RESET}
   stop        Stop all services (OpenSearch + Koha stack)
   restart     Quick restart: reset DB + recreate Koha container only
               (skips OpenSearch restart — use when OS is already running)
+  tls-client-cert
+              Generate/reuse MariaDB client TLS cert/key and wire env/.env
   reset       Stop everything, remove all containers and named volumes
               (requires confirmation; images are preserved)
   status      Show running containers and OpenSearch cluster health
@@ -908,6 +978,11 @@ ${BOLD}Options for 'start' and 'build':${RESET}
   --no-logs             Do not tail Koha startup logs after starting
   --with-demo-data      Load sample MARC records, items, and patron data (default)
   --no-demo-data        Start with an empty catalogue — superlibrarian account only
+  --prepare-db-client-tls
+                        Ensure files-alpine/mariadb-ssl/client-{cert,key}.pem exist
+                        and auto-set KOHA_DB_TLS_CLIENT_{CERTIFICATE,KEY} in env/.env
+  --force-client-tls-regen
+                        Regenerate client TLS cert/key even if already present
 
 ${BOLD}Koha source bootstrap (env/.env):${RESET}
   SYNC_REPO             Host path for Koha source (auto-cloned if missing)
@@ -931,6 +1006,9 @@ ${BOLD}Examples:${RESET}
   $(basename "$0") start --no-fresh-db      # Restart without wiping the database
   $(basename "$0") start --bootstrap-profile full
   $(basename "$0") start --no-logs          # Start without tailing logs
+  $(basename "$0") start --prepare-db-client-tls
+  $(basename "$0") tls-client-cert
+  $(basename "$0") tls-client-cert --force-client-tls-regen
   KOHA_DESIRED_LANGUAGES=en,es-ES,ro-RO $(basename "$0") start
   $(basename "$0") restart                  # Quick restart (DB reset + koha only)
   $(basename "$0") restart --no-demo-data   # Quick restart, clean catalogue
@@ -958,6 +1036,8 @@ FRESH_DB=true
 FOLLOW_LOGS=true
 BACKUP_OUTPUT=""
 RESTORE_ARCHIVE=""
+PREPARE_DB_CLIENT_TLS=false
+FORCE_CLIENT_TLS_REGEN=false
 # Read LOAD_DEMO_DATA from env/.env (default 'yes'); --no-demo-data / --with-demo-data override
 LOAD_DEMO_DATA="$(_env_val "${KOHA_ENV_FILE}" LOAD_DEMO_DATA yes)"
 ALPINE_BOOTSTRAP_PROFILE="$(_env_val "${KOHA_ENV_FILE}" ALPINE_BOOTSTRAP_PROFILE resume)"
@@ -965,7 +1045,7 @@ ALPINE_BOOTSTRAP_PROFILE="$(_env_val "${KOHA_ENV_FILE}" ALPINE_BOOTSTRAP_PROFILE
 # Parse command (first positional arg)
 if [[ $# -gt 0 ]]; then
   case "$1" in
-    start|stop|restart|reset|status|logs|build|backup|restore) COMMAND="$1"; shift ;;
+    start|stop|restart|reset|status|logs|build|backup|restore|tls-client-cert) COMMAND="$1"; shift ;;
     --help|-h) usage; exit 0 ;;
     --*) : ;;  # no subcommand given, use default "start"
     *) die "Unknown command: '$1'. Run '$(basename "$0") --help' for usage." ;;
@@ -986,6 +1066,8 @@ while [[ $# -gt 0 ]]; do
     --no-logs)           FOLLOW_LOGS=false ;;
     --no-demo-data)      LOAD_DEMO_DATA=no ;;
     --with-demo-data)    LOAD_DEMO_DATA=yes ;;
+    --prepare-db-client-tls) PREPARE_DB_CLIENT_TLS=true ;;
+    --force-client-tls-regen) FORCE_CLIENT_TLS_REGEN=true; PREPARE_DB_CLIENT_TLS=true ;;
     --output)
       [[ $# -ge 2 ]] || die "--output requires a file path"
       BACKUP_OUTPUT="$2"
@@ -1026,6 +1108,7 @@ case "${COMMAND}" in
 
   start)
     check_prereqs
+    [[ "${PREPARE_DB_CLIENT_TLS}" == true ]] && prepare_mariadb_client_tls
     ensure_koha_source
     [[ "${BUILD_OPENSEARCH}" == true ]] && build_opensearch
     [[ "${BUILD_KOHA}"       == true ]] && build_koha
@@ -1098,6 +1181,7 @@ case "${COMMAND}" in
 
   restart)
     check_prereqs
+    [[ "${PREPARE_DB_CLIENT_TLS}" == true ]] && prepare_mariadb_client_tls
     ensure_koha_source
     hdr "Quick restart (OpenSearch stays up)"
     warn "Assumes OpenSearch cluster is already running and green."
@@ -1130,6 +1214,7 @@ case "${COMMAND}" in
 
   build)
     check_prereqs
+    [[ "${PREPARE_DB_CLIENT_TLS}" == true ]] && prepare_mariadb_client_tls
     if [[ "${BUILD_OPENSEARCH}" == false && "${BUILD_KOHA}" == false ]]; then
       # No specific target → build everything
       BUILD_OPENSEARCH=true; BUILD_KOHA=true
@@ -1148,6 +1233,12 @@ case "${COMMAND}" in
   restore)
     check_prereqs
     restore_backup_bundle
+    ;;
+
+  tls-client-cert)
+    check_prereqs
+    prepare_mariadb_client_tls
+    ok "TLS client materials are ready. Next: ./$(basename "$0") restart --no-logs"
     ;;
 
 esac
