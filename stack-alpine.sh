@@ -98,7 +98,9 @@ KOHA_TRANSLATIONS_REINSTALL="$(_env_val "${KOHA_ENV_FILE}" KOHA_TRANSLATIONS_REI
 
 DB_NAME="koha_${KOHA_INSTANCE}"
 DB_USER="koha_${KOHA_INSTANCE}"
-KOHA_PROJECT="$(basename "${KOHA_PROJECT_DIR}")"   # → koha-alpine
+KOHA_PROJECT="$(basename "${KOHA_PROJECT_DIR}")"   # which strips away all leading parent directories and leaves only the final folder name string → koha-alpine
+# Auto-update SYNC_REPO to current machine's full absolute path. This should eliminate the need of doing a manual edit of env/.env when moving the project to a different machine or path.
+perl -pi -e "s|^SYNC_REPO=.*|SYNC_REPO=${KOHA_PROJECT_DIR}/koha|" "${KOHA_PROJECT_DIR}/env/.env"
 DB_CONTAINER="${KOHA_PROJECT}-db-1"
 BACKUP_ROOT="${SCRIPT_DIR}/backups"
 BOOTSTRAP_MARKER="${SYNC_REPO}/.alpine-bootstrap-complete"
@@ -170,7 +172,7 @@ normalize_language_list() {
 
 wait_translation_runtime() {
   local attempts=0
-  local max=180
+  local max=350
 
   log "Waiting for Koha translation runtime and full startup readiness for instance '${KOHA_INSTANCE}'..."
   until koha_compose exec -T koha bash -lc "
