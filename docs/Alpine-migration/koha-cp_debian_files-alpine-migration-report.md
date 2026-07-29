@@ -29,17 +29,18 @@ The second call inside do_all_you_can_do.pl:128 is genuinely overlapping. It rep
 
 So the duplication is real, but the two calls are not identical in purpose:
 
-the early call is needed to prepare the container before bootstrap,
-the later call is part of the full bootstrap script contract and re-applies the layout after DB setup.
+- the early call is needed to prepare the container before bootstrap,
+- the later call is part of the full bootstrap script contract and re-applies the layout after DB setup.
+
 If your goal is to remove duplication later, the safest split is:
 
 - keep the early call for minimum pre-bootstrap staging,
-- make the later cp_debian_files.pl path inside do_all_you_can_do.pl conditional or replace it with an Alpine-specific narrower refresh step.
+- make the later `cp_debian_files.pl` path inside `do_all_you_can_do.pl` conditional or replace it with an Alpine-specific narrower refresh step.
 - That would reduce repeated work without breaking existing startup behavior.
 
-The refresh step exists because the container does not start with a usable Koha runtime layout. The first call to `copy_runtime_files` in `run.sh` materializes the instance filesystem before database probing and before bootstrap. In practice, that means it creates or refreshes the files that later steps need to exist already: Koha site config under /etc/koha, helper commands under `/usr/sbin` and `/usr/share/koha/bin`, manpages, Apache git-mode config, and the instance-specific rewrites performed by koha-gitify.
+The refresh step exists because the container does not start with a usable Koha runtime layout. The first call to `copy_runtime_files` in `run.sh` materializes the instance filesystem before database probing and before bootstrap. In practice, that means it creates or refreshes the files that later steps need to exist already: Koha site config under `/etc/koha`, helper commands under `/usr/sbin` and `/usr/share/koha/bin`, manpages, Apache git-mode config, and the instance-specific rewrites performed by koha-gitify.
 
-So it is not just a “checkup.” It is a prerequisite staging step. The logic in run-sh-alpine.sh:107 is: if an Alpine-specific helper exists at runtime inside the container, use it; otherwise fall back to the Debian-oriented helper. That early refresh makes the startup path work before koha-create, Apache, and the later do_all_you_can_do.pl:128 pass run.
+So it is not just a “checkup.” It is a prerequisite staging step. The logic in `run-sh-alpine.sh`:107 is: if an Alpine-specific helper exists at runtime inside the container, use it; otherwise fall back to the Debian-oriented helper. That early refresh makes the startup path work before `koha-create`, Apache, and the later `do_all_you_can_do.pl`:128 pass run.
 
 The duplication is real, but the first call is there to get the container bootstrapped at all. The second call is the broader “do everything” pass that repeats the layout refresh after DB setup.
 
@@ -55,7 +56,6 @@ The second call in `do_all_you_can_do.pl`:128 does not ask “does this file exi
 The first staging in `run.sh`:120 is needed to get the container into a usable state before DB probing and bootstrap. The second staging is there because `do_all_you_can_do.pl` is designed as a self-contained “do everything” script and re-applies the package-style layout as part of that contract. In other words, the duplication is intentional defensive behavior, not a simple existence check.
 
 If you want to remove redundancy later, the right fix is not “check if files exist,” but “separate immutable build-time files from mutable runtime-generated files and only refresh the mutable set.” That gives you a narrower Alpine-native refresh path without risking stale configuration.
-
 
 ### 2.2 Transitive call from `do_all_you_can_do.pl`
 

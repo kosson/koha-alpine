@@ -1,10 +1,14 @@
 # Alpine Linux Koha Docker Environment
 
 A modern, lightweight Koha library management system runtime on Alpine Linux 3.24.1 with production-grade SSL/TLS database connectivity.
+This setting and arrangements are originated in KTD Koha - https://gitlab.com/koha-community/koha-testing-docker.
 
-**Status:** ✅ HTTP-Ready Production Image `kosson/koha-alpine:26.11`
+This setup enables development and testing contexts. Also, it promotes OpenSearch integration for indexing purposes.
+The main reason for developing this alternative is resource based, and production oriented. Its sister repo https://github.com/kosson/koha-docker still uses Debian/Ubuntu, but the space used for the image is rather big. Also Debian/Ubuntu operating systems are very well endowed with all it needs for development.
 
----
+The resulting Koha container is using the components it depends on as separate services. These are MariaDB (the database), RabbitMQ (the message queue messenger), Memcached (caching manager). OpenSearch version 3.6 is used for indexing, the cluster being provided as a separate service added to those who are raised all together using the `docker-compose-alpinekoha` orchestrator file.
+
+Skills wise, you need to know how to use a terminal shell, and to use a Linux/GNU operating system. The development of this project was done on Ubuntu, Debian Trixie, and Linux Mint distributions.
 
 ## Table of Contents
 
@@ -22,16 +26,15 @@ A modern, lightweight Koha library management system runtime on Alpine Linux 3.2
 12. [Reproducible Rebuild and Validation (Clean Cycle)](#reproducible-rebuild-and-validation-clean-cycle)
 13. [Development Workflow](#development-workflow)
 
----
-
 ## Quick Start
 
 ### Prerequisites
 
 - Docker Engine 20.10+ with docker-compose support
 - Sufficient disk space (1.8GB for base image + database volume)
+- At least 16 GB of RAM (OpenSearch cluster is RAM hungry)
 - Network connectivity for initial image build
-- A writable local clone path for Koha source (used by `SYNC_REPO`)
+- A writable local clone path for Koha source (modify the `SYNC_REPO` value in env/.env)
 
 ### Start From Zero (Layman Path)
 
@@ -60,8 +63,10 @@ docker network create opensearch-36_osearch || true
 docker network create knonikl || true
 docker network create frontend || true
 
-# Create your local env file
+# Create your local env file for Koha usage
 cp env/template.env env/.env
+# Create OpenSearch env file for OpenSearch usage
+cp OpenSearch-3.6/template.env .env
 ```
 
 Now edit `env/.env` and set at minimum:
@@ -75,7 +80,18 @@ If you selected full mode (`yes`), ensure these credentials match:
 1. `env/.env`: `OPENSEARCH_INITIAL_ADMIN_PASSWORD`
 2. `OpenSearch-3.6/.env`: `OPENSEARCH_INITIAL_ADMIN_PASSWORD`
 
+Initially it comes with a dummy password that match. Be very careful at this step if you modify in one place.
+
 #### Step 3: OpenSearch first-run bootstrap (only if full mode)
+
+Remember to copy template.env to .env: `cp OpenSearch-3.6/template.env OpenSearch-3.6/.env` prior to the following operations. Observe that the `.env` file you've just created by copying the template has in the end the following two lines similar to the:
+
+```ini
+OS_COMPLIANCE_SALT=ZLqnAIFnRMj2wTFw
+OS_QUERY_MASTERKEY=0217e69bff29bc67dc12c16d84904a85
+```
+
+Those will be overwritten soon enough.
 
 ```bash
 docker pull opensearchproject/opensearch:3.6.0
@@ -90,17 +106,27 @@ cd OpenSearch-3.6
 cd ..
 ```
 
+If the cluster is raised and green (message in Terminal: `[raise-from-ground-up] Cluster status=yellow, nodes=5`), bring it down before the next step `docker compose down -v --remove-orphans`. It will be brought back soon enough by another script in the next step. Remember to go up a level: `cd ..`
+
 #### Step 4: Build and start Koha stack
 
 ```bash
 # Build image (first run or after Dockerfile changes)
 docker compose -f docker-compose-alpinekoha.yml build
+```
 
+This command will build your Koha image adding to this blueprint all the resources needed when the container will be sprung up into existence. Mind you it take a fair bit of time.
+
+```bash
 # Prepare MariaDB TLS client cert/key and auto-wire env
 ./stack-alpine.sh tls-client-cert
+```
 
+The next step is to start everything running the following command:
+
+```bash
 # Start full managed stack
-./stack-alpine.sh start --no-logs
+./stack-alpine.sh start
 ```
 
 #### Step 5: Wait, verify, then login
@@ -127,7 +153,11 @@ Login defaults come from `env/.env`:
 1. Username: `KOHA_USER`
 2. Password: `KOHA_PASS`
 
+By default is user `koha` and password `koha`.
+
 #### If you need to fully restart from zero later
+
+Sometimes you just need to start all over again. Here is how.
 
 ```bash
 # Destructive: removes containers + named volumes managed by stack
@@ -225,7 +255,7 @@ Recommended check after you start all the services:
 bash tests/test_opensearch_os01_auth_integration.sh
 ```
 
-As a rule of thumb it is wise to start the OpenSearch cluster. If it forms well, procede with the rest.
+As a rule of thumb it is wise to start the OpenSearch cluster. If it forms well, continue with the next step.
 
 ### Start the Stack in 5 Steps
 
@@ -247,7 +277,7 @@ docker compose -f docker-compose-alpinekoha.yml build
 ./stack-alpine.sh tls-client-cert
 
 # 5. Start via stack manager (recommended)
-./stack-alpine.sh start --no-logs
+./stack-alpine.sh start
 ```
 
 Important:
