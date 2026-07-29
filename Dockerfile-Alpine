@@ -615,6 +615,11 @@ RUN cd /kohadevbox \
     && git clone https://gitlab.com/koha-community/qa-test-tools.git qa-test-tools \
     && chown -R 1000 misc4dev gitify qa-test-tools
 
+# Add the Alpine-specific misc4dev helper without changing the upstream clone layout.
+COPY files-alpine/misc4dev/cp_alpine_files.pl /kohadevbox/misc4dev/cp_alpine_files.pl
+
+RUN chmod +x /kohadevbox/misc4dev/cp_alpine_files.pl
+
 EXPOSE 6001 8080 8081
 
 CMD ["/bin/bash", "/kohadevbox/run.sh"]
