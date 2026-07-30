@@ -1,4 +1,4 @@
-FROM alpine:3.24.1
+FROM alpine:3.24.1 AS dev-runtime
 
 # File Author / Maintainer
 LABEL maintainer="kosson@gmail.com"
@@ -6,7 +6,7 @@ LABEL maintainer="kosson@gmail.com"
 ENV PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
-ENV REFRESHED_AT=2026-07-22T18:20:00Z
+ENV REFRESHED_AT=2026-07-22T18:20:00Z14
 
 # Alpine base packages for a Koha-oriented runtime and build environment.
 RUN apk add --no-cache \
@@ -623,3 +623,28 @@ RUN chmod +x /kohadevbox/misc4dev/cp_alpine_files.pl
 EXPOSE 6001 8080 8081
 
 CMD ["/bin/bash", "/kohadevbox/run.sh"]
+
+FROM dev-runtime AS prod-runtime
+
+ARG KOHA_GIT_URL=https://git.koha-community.org/Koha-community/Koha.git
+ARG KOHA_GIT_REF=v25.11.05-1
+ARG KOHA_GIT_DEPTH=1
+ARG KOHA_VERSION=25.11.05-1
+
+LABEL org.opencontainers.image.title="koha-alpine-prod" \
+      org.opencontainers.image.version="${KOHA_VERSION}" \
+      org.opencontainers.image.source="${KOHA_GIT_URL}"
+
+# Bake a fixed Koha source tree in-image for production runs.
+RUN rm -rf /kohadevbox/koha \
+    && mkdir -p /kohadevbox/koha \
+    && git -C /kohadevbox/koha init \
+    && git -C /kohadevbox/koha remote add origin "${KOHA_GIT_URL}" \
+    && git -C /kohadevbox/koha fetch --depth "${KOHA_GIT_DEPTH}" origin "${KOHA_GIT_REF}" \
+    && git -C /kohadevbox/koha checkout --detach FETCH_HEAD
+
+# Pre-install JS dependencies at build time to reduce runtime startup cost.
+RUN cd /kohadevbox/koha \
+    && yarn install --frozen-lockfile
+
+ENV SKIP_YARN_INSTALL=yes

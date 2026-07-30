@@ -39,6 +39,7 @@ services:
         build:
             context: .
             dockerfile: Dockerfile-Alpine
+            target: dev-runtime
         depends_on:
             - db
             - memcached

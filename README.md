@@ -18,13 +18,14 @@ Skills wise, you need to know how to use a terminal shell, and to use a Linux/GN
 4. [Project Structure](#project-structure)
 5. [Environment Configuration](#environment-configuration)
 6. [Starting the Project](#starting-the-project)
-7. [Operating the System](#operating-the-system)
-8. [Architecture](#architecture)
-9. [Troubleshooting](#troubleshooting)
-10. [Dockerfile-Alpine Shims (1-Minute Explainer)](#dockerfile-alpine-shims-1-minute-explainer)
-11. [OpenSearch Maintenance Tasks](#opensearch-maintenance-tasks)
-12. [Reproducible Rebuild and Validation (Clean Cycle)](#reproducible-rebuild-and-validation-clean-cycle)
-13. [Development Workflow](#development-workflow)
+7. [Dual Image Modes (Development vs Production)](#dual-image-modes-development-vs-production)
+8. [Operating the System](#operating-the-system)
+9. [Architecture](#architecture)
+10. [Troubleshooting](#troubleshooting)
+11. [Dockerfile-Alpine Shims (1-Minute Explainer)](#dockerfile-alpine-shims-1-minute-explainer)
+12. [OpenSearch Maintenance Tasks](#opensearch-maintenance-tasks)
+13. [Reproducible Rebuild and Validation (Clean Cycle)](#reproducible-rebuild-and-validation-clean-cycle)
+14. [Development Workflow](#development-workflow)
 
 ## Quick Start
 
@@ -824,6 +825,91 @@ docker compose -f docker-compose-alpinekoha.yml logs koha | grep "\[alpine\]"
 
 ---
 
+## Dual Image Modes (Development vs Production)
+
+This project now supports two explicit image/run contexts from the same codebase.
+
+### Mode comparison
+
+| Mode | Build target | Source layout | Compose files used | Typical use |
+|------|--------------|---------------|--------------------|-------------|
+| Development | `dev-runtime` | Host source is bind-mounted (`SYNC_REPO` -> `/kohadevbox/koha`) | `docker-compose-alpinekoha.yml` | Day-to-day coding, patching, fast iteration |
+| Production | `prod-runtime` | Koha source is baked into image layers at a fixed ref | `docker-compose-alpinekoha.yml` + `docker-compose.prod.yml` | Immutable versioned runtime and release deployment |
+
+Important behavior differences:
+
+1. Development mode requires a valid `SYNC_REPO` path.
+2. Production mode does not mount `SYNC_REPO`; the Koha tree is built into the image.
+3. Production mode uses a version-derived compose project name (`koha-prod-<version-slug>`), which helps keep container names tied to Koha version context.
+
+### Build and start in Development context
+
+Use this when actively editing Koha source.
+
+```bash
+# Build Koha image in development mode (default target: dev-runtime)
+./stack-alpine.sh build --image-mode dev --build-koha
+
+# Start full stack in development mode
+./stack-alpine.sh start --image-mode dev
+```
+
+Notes:
+
+1. `--image-mode dev` is optional because dev is the default.
+2. Source changes under `SYNC_REPO` are visible immediately in container.
+
+### Build and start in Production context (fixed Koha version)
+
+Use this for immutable, version-pinned runtime builds.
+
+```bash
+# Build fixed-version prod image (baked source, no source bind mount)
+./stack-alpine.sh build \
+  --image-mode prod \
+  --koha-version 26.11.00 \
+  --koha-ref v26.11.00 \
+  --build-koha
+
+# Start stack in prod mode with the same version/ref
+./stack-alpine.sh start \
+  --image-mode prod \
+  --koha-version 26.11.00 \
+  --koha-ref v26.11.00
+```
+
+What these flags control:
+
+1. `--image-mode prod` enables `docker-compose.prod.yml` override.
+2. `--koha-version` sets the release label (used for tag/project naming).
+3. `--koha-ref` pins the Koha Git ref baked into the image.
+
+### Optional direct Docker Compose usage (without stack script)
+
+If you need manual compose control for production mode:
+
+```bash
+KOHA_RELEASE_VERSION=26.11.00 \
+KOHA_RELEASE_REF=v26.11.00 \
+KOHA_ALPINE_PROD_IMAGE_TAG=kosson/koha-alpine-prod:26.11.00 \
+docker compose \
+  -f docker-compose-alpinekoha.yml \
+  -f docker-compose.prod.yml \
+  --env-file env/.env \
+  up -d --build
+```
+
+### Quick operational recommendations
+
+1. Keep development and production runs in separate compose projects/hosts.
+2. For production, always build with explicit `--koha-version` and `--koha-ref`.
+3. Reuse the exact same version/ref flags for `build` and `start` to avoid drift.
+4. Validate endpoints after startup in both modes:
+   - `http://localhost:8080` (OPAC)
+   - `http://localhost:8081` (Staff)
+
+---
+
 ## Operating the System
 
 ### Daily Operations
@@ -1395,6 +1481,9 @@ git push origin feature/my-feature
 
 ## Production Deployment
 
+Production mode now uses the fixed-version image workflow described in `Dual Image Modes (Development vs Production)`.
+The procedure below is the canonical deployment path.
+
 ### Pre-Deployment Checklist
 
 - [ ] All modules compile without "Can't locate" errors
@@ -1403,30 +1492,60 @@ git push origin feature/my-feature
 - [ ] SSL certificates are current and valid
 - [ ] Environment variables are secured (change default passwords)
 - [ ] Backup database connection string and certificates
+- [ ] Target release values are decided and pinned (`KOHA version` + `Git ref/tag`)
 
 ### Deployment Steps
 
 ```bash
-# 1. Update image tag in docker-compose-alpinekoha.yml
-KOHA_ALPINE_IMAGE_TAG=kosson/koha-alpine:26.11-prod
+# 1. Build a fixed-version production image (baked Koha source)
+./stack-alpine.sh build \
+  --image-mode prod \
+  --koha-version 26.11.00 \
+  --koha-ref v26.11.00 \
+  --build-koha
 
-# 2. Build final image
-docker compose -f docker-compose-alpinekoha.yml build --no-cache
+# 2. (Optional) Push the resulting image tag to registry
+docker push kosson/koha-alpine-prod:26.11.00
 
-# 3. Tag and push to registry
-docker tag kosson/koha-alpine:26.11 kosson/koha-alpine:26.11-prod
-docker push kosson/koha-alpine:26.11-prod
+# 3. Start stack in production mode with the exact same version/ref
+./stack-alpine.sh start \
+  --image-mode prod \
+  --koha-version 26.11.00 \
+  --koha-ref v26.11.00
 
-# 4. Deploy on target host
-docker compose -f docker-compose-alpinekoha.yml \
-  -f docker-compose.prod.yml \
-  up -d
-
-# 5. Verify
-docker compose -f docker-compose-alpinekoha.yml ps
+# 4. Verify services and endpoints
+./stack-alpine.sh status
 curl http://localhost:8080/
 curl http://localhost:8081/
 ```
+
+### Direct Compose Alternative (manual)
+
+If you need to deploy without the stack wrapper:
+
+```bash
+KOHA_RELEASE_VERSION=26.11.00 \
+KOHA_RELEASE_REF=v26.11.00 \
+KOHA_ALPINE_PROD_IMAGE_TAG=kosson/koha-alpine-prod:26.11.00 \
+docker compose \
+  -f docker-compose-alpinekoha.yml \
+  -f docker-compose.prod.yml \
+  --env-file env/.env \
+  up -d --build
+```
+
+### Rollback Pattern
+
+Use the previous known-good production tag and restart in prod mode:
+
+```bash
+./stack-alpine.sh start \
+  --image-mode prod \
+  --koha-version 26.11.00 \
+  --koha-ref v26.11.00
+```
+
+To rollback, replace those values with the earlier version/ref pair.
 
 ### Scaling & Load Balancing
 

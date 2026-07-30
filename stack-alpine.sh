@@ -22,6 +22,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OPENSEARCH_DIR="${SCRIPT_DIR}/OpenSearch-3.6"
 TRAEFIK_DIR="${SCRIPT_DIR}/traefik"
 KOHA_COMPOSE_FILE="${SCRIPT_DIR}/docker-compose-alpinekoha.yml"
+KOHA_COMPOSE_PROD_FILE="${SCRIPT_DIR}/docker-compose.prod.yml"
 KOHA_ENV_FILE="${SCRIPT_DIR}/env/.env"
 KOHA_PROJECT_DIR="${SCRIPT_DIR}"
 KOHA_DEFAULT_REPO_URL="https://git.koha-community.org/Koha-community/Koha.git"
@@ -95,13 +96,20 @@ KOHA_GIT_DEPTH="$(_env_val "${KOHA_ENV_FILE}" KOHA_GIT_DEPTH 1)"
 KOHA_DESIRED_LANGUAGES="$(_env_val "${KOHA_ENV_FILE}" KOHA_DESIRED_LANGUAGES en)"
 KOHA_OPAC_LANGUAGES_DISPLAY="$(_env_val "${KOHA_ENV_FILE}" KOHA_OPAC_LANGUAGES_DISPLAY 1)"
 KOHA_TRANSLATIONS_REINSTALL="$(_env_val "${KOHA_ENV_FILE}" KOHA_TRANSLATIONS_REINSTALL no)"
+KOHA_IMAGE_MODE="$(_env_val "${KOHA_ENV_FILE}" KOHA_IMAGE_MODE dev)"
+KOHA_RELEASE_VERSION="$(_env_val "${KOHA_ENV_FILE}" KOHA_RELEASE_VERSION "${KOHA_GIT_TAG#v}")"
+KOHA_RELEASE_REF="$(_env_val "${KOHA_ENV_FILE}" KOHA_RELEASE_REF "${KOHA_GIT_TAG}")"
+KOHA_RELEASE_GIT_URL="$(_env_val "${KOHA_ENV_FILE}" KOHA_RELEASE_GIT_URL "${KOHA_GIT_URL}")"
+KOHA_RELEASE_GIT_DEPTH="$(_env_val "${KOHA_ENV_FILE}" KOHA_RELEASE_GIT_DEPTH "${KOHA_GIT_DEPTH}")"
+KOHA_ALPINE_PROD_IMAGE_TAG="$(_env_val "${KOHA_ENV_FILE}" KOHA_ALPINE_PROD_IMAGE_TAG "")"
 
 DB_NAME="koha_${KOHA_INSTANCE}"
 DB_USER="koha_${KOHA_INSTANCE}"
 KOHA_PROJECT="$(basename "${KOHA_PROJECT_DIR}")"   # which strips away all leading parent directories and leaves only the final folder name string → koha-alpine
 # Auto-update SYNC_REPO to current machine's full absolute path. This should eliminate the need of doing a manual edit of env/.env when moving the project to a different machine or path.
 perl -pi -e "s|^SYNC_REPO=.*|SYNC_REPO=${KOHA_PROJECT_DIR}/koha|" "${KOHA_PROJECT_DIR}/env/.env"
-DB_CONTAINER="${KOHA_PROJECT}-db-1"
+KOHA_COMPOSE_PROJECT="${KOHA_PROJECT}"
+DB_CONTAINER="${KOHA_COMPOSE_PROJECT}-db-1"
 BACKUP_ROOT="${SCRIPT_DIR}/backups"
 BOOTSTRAP_MARKER="${SYNC_REPO}/.alpine-bootstrap-complete"
 
@@ -126,6 +134,12 @@ reload_runtime_config() {
   KOHA_DESIRED_LANGUAGES="$(_env_val "${KOHA_ENV_FILE}" KOHA_DESIRED_LANGUAGES "${KOHA_DESIRED_LANGUAGES}")"
   KOHA_OPAC_LANGUAGES_DISPLAY="$(_env_val "${KOHA_ENV_FILE}" KOHA_OPAC_LANGUAGES_DISPLAY "${KOHA_OPAC_LANGUAGES_DISPLAY}")"
   KOHA_TRANSLATIONS_REINSTALL="$(_env_val "${KOHA_ENV_FILE}" KOHA_TRANSLATIONS_REINSTALL "${KOHA_TRANSLATIONS_REINSTALL}")"
+  KOHA_IMAGE_MODE="$(_env_val "${KOHA_ENV_FILE}" KOHA_IMAGE_MODE "${KOHA_IMAGE_MODE}")"
+  KOHA_RELEASE_VERSION="$(_env_val "${KOHA_ENV_FILE}" KOHA_RELEASE_VERSION "${KOHA_RELEASE_VERSION}")"
+  KOHA_RELEASE_REF="$(_env_val "${KOHA_ENV_FILE}" KOHA_RELEASE_REF "${KOHA_RELEASE_REF}")"
+  KOHA_RELEASE_GIT_URL="$(_env_val "${KOHA_ENV_FILE}" KOHA_RELEASE_GIT_URL "${KOHA_RELEASE_GIT_URL}")"
+  KOHA_RELEASE_GIT_DEPTH="$(_env_val "${KOHA_ENV_FILE}" KOHA_RELEASE_GIT_DEPTH "${KOHA_RELEASE_GIT_DEPTH}")"
+  KOHA_ALPINE_PROD_IMAGE_TAG="$(_env_val "${KOHA_ENV_FILE}" KOHA_ALPINE_PROD_IMAGE_TAG "${KOHA_ALPINE_PROD_IMAGE_TAG}")"
   TRAEFIK_HTTP_PORT="$(_env_val "${TRAEFIK_DIR}/.env" TRAEFIK_HTTP_PORT "${TRAEFIK_HTTP_PORT}")"
   TRAEFIK_HTTPS_PORT="$(_env_val "${TRAEFIK_DIR}/.env" TRAEFIK_HTTPS_PORT "${TRAEFIK_HTTPS_PORT}")"
   TRAEFIK_DASHBOARD_PORT="$(_env_val "${TRAEFIK_DIR}/.env" TRAEFIK_DASHBOARD_PORT "${TRAEFIK_DASHBOARD_PORT}")"
@@ -135,6 +149,7 @@ reload_runtime_config() {
   TLS_CERTRESOLVER="$(_env_val "${KOHA_ENV_FILE}" TLS_CERTRESOLVER "${TLS_CERTRESOLVER}")"
   DB_NAME="koha_${KOHA_INSTANCE}"
   DB_USER="koha_${KOHA_INSTANCE}"
+  configure_koha_mode
 }
 
 normalize_language_list() {
@@ -168,6 +183,51 @@ normalize_language_list() {
     out+="${out:+,}${token}"
   done
   echo "${out}"
+}
+
+version_slug() {
+  local raw="$1"
+  echo "${raw}" \
+    | tr '[:upper:]' '[:lower:]' \
+    | sed -e 's/^v//' -e 's/[^a-z0-9]/-/g' -e 's/-\{2,\}/-/g' -e 's/^-//' -e 's/-$//'
+}
+
+configure_koha_mode() {
+  KOHA_IMAGE_MODE="$(echo "${KOHA_IMAGE_MODE}" | tr '[:upper:]' '[:lower:]')"
+  case "${KOHA_IMAGE_MODE}" in
+    dev|prod) ;;
+    *) die "Invalid --image-mode '${KOHA_IMAGE_MODE}'. Use dev or prod." ;;
+  esac
+
+  if [[ "${KOHA_IMAGE_MODE}" == "prod" ]]; then
+    if [[ -n "${KOHA_RELEASE_VERSION}" && -z "${KOHA_RELEASE_REF}" ]]; then
+      KOHA_RELEASE_REF="v${KOHA_RELEASE_VERSION}"
+    fi
+    if [[ -z "${KOHA_RELEASE_VERSION}" && -n "${KOHA_RELEASE_REF}" ]]; then
+      KOHA_RELEASE_VERSION="${KOHA_RELEASE_REF#v}"
+    fi
+
+    [[ -n "${KOHA_RELEASE_VERSION}" ]] || die "KOHA_RELEASE_VERSION is required in prod mode"
+    [[ -n "${KOHA_RELEASE_REF}" ]] || die "KOHA_RELEASE_REF is required in prod mode"
+
+    if [[ -z "${KOHA_ALPINE_PROD_IMAGE_TAG}" ]]; then
+      KOHA_ALPINE_PROD_IMAGE_TAG="kosson/koha-alpine-prod:${KOHA_RELEASE_VERSION}"
+    fi
+
+    local _slug
+    _slug="$(version_slug "${KOHA_RELEASE_VERSION}")"
+    KOHA_COMPOSE_PROJECT="koha-prod-${_slug}"
+
+    export KOHA_RELEASE_VERSION
+    export KOHA_RELEASE_REF
+    export KOHA_RELEASE_GIT_URL
+    export KOHA_RELEASE_GIT_DEPTH
+    export KOHA_ALPINE_PROD_IMAGE_TAG
+  else
+    KOHA_COMPOSE_PROJECT="${KOHA_PROJECT}"
+  fi
+
+  DB_CONTAINER="${KOHA_COMPOSE_PROJECT}-db-1"
 }
 
 wait_translation_runtime() {
@@ -273,9 +333,18 @@ UPDATE systempreferences SET value='${opac_display}' WHERE variable='opaclanguag
 # Compose wrappers
 # ---------------------------------------------------------------------------
 koha_compose() {
+  local compose_args=(
+    -f "${KOHA_COMPOSE_FILE}"
+  )
+
+  if [[ "${KOHA_IMAGE_MODE}" == "prod" ]]; then
+    compose_args+=( -f "${KOHA_COMPOSE_PROD_FILE}" )
+  fi
+
   docker compose \
-    -f "${KOHA_COMPOSE_FILE}" \
+    "${compose_args[@]}" \
     --env-file "${KOHA_ENV_FILE}" \
+    -p "${KOHA_COMPOSE_PROJECT}" \
     --project-directory "${KOHA_PROJECT_DIR}" \
     "$@"
 }
@@ -306,6 +375,9 @@ check_prereqs() {
   docker info >/dev/null 2>&1 || die "Docker daemon is not running. Start it first (for example: sudo systemctl start docker)."
   docker compose version >/dev/null 2>&1 || die "Docker Compose plugin not found"
   [[ -f "${KOHA_ENV_FILE}" ]] || die "env/.env not found — copy and configure it first"
+  if [[ "${KOHA_IMAGE_MODE}" == "prod" ]]; then
+    [[ -f "${KOHA_COMPOSE_PROD_FILE}" ]] || die "docker-compose.prod.yml not found"
+  fi
   [[ -f "${OPENSEARCH_DIR}/docker-compose.yml" ]] \
     || die "OpenSearch-3.6/docker-compose.yml not found"
   [[ -f "${TRAEFIK_DIR}/docker-compose.yaml" ]] \
@@ -616,6 +688,11 @@ build_opensearch() {
 
 build_koha() {
   hdr "Building Koha image"
+  log "Image mode: ${KOHA_IMAGE_MODE}"
+  if [[ "${KOHA_IMAGE_MODE}" == "prod" ]]; then
+    log "Production image tag: ${KOHA_ALPINE_PROD_IMAGE_TAG}"
+    log "Koha ref: ${KOHA_RELEASE_REF}"
+  fi
   koha_compose build koha
   ok "Koha image built."
 }
@@ -800,7 +877,9 @@ restore_backup_bundle() {
   cp "${stage_dir}/config/opensearch.env" "${OPENSEARCH_DIR}/.env"
 
   reload_runtime_config
-  ensure_koha_source
+  if [[ "${KOHA_IMAGE_MODE}" == "dev" ]]; then
+    ensure_koha_source
+  fi
 
   ok "Configuration files restored."
 
@@ -982,8 +1061,12 @@ ${BOLD}Commands:${RESET}
   restore     Restore env files + MariaDB data from a backup bundle
 
 ${BOLD}Options for 'start' and 'build':${RESET}
+  --image-mode <dev|prod>
+                        Choose compose/build mode (default: dev)
+  --koha-version <ver>  Production version label (for example 26.11.00)
+  --koha-ref <ref>      Production git ref/tag/commit (for example v26.11.00)
   --build-opensearch    Rebuild the kosson/opensearch-icu image (analysis-icu plugin)
-  --build-koha          Rebuild the Koha dev container image
+  --build-koha          Rebuild the Koha image for the selected --image-mode
   --build               Rebuild both OpenSearch and Koha images
   --no-fresh-db         Skip the database drop/recreate (preserve existing data)
   --bootstrap-profile <resume|full>
@@ -1014,6 +1097,7 @@ ${BOLD}Koha language automation (env/.env):${RESET}
 
 ${BOLD}Examples:${RESET}
   $(basename "$0") start                    # Fresh DB + demo data, follow logs
+  $(basename "$0") start --image-mode prod --koha-version 26.11.00 --koha-ref v26.11.00
   $(basename "$0") start --no-demo-data     # Fresh DB, clean catalogue (no sample records)
   $(basename "$0") start --with-demo-data   # Explicitly load demo data (same as default)
   $(basename "$0") start --build            # Rebuild all images, then start
@@ -1032,6 +1116,7 @@ ${BOLD}Examples:${RESET}
   $(basename "$0") status                   # Check what's running
   $(basename "$0") logs                     # Attach to Koha logs
   $(basename "$0") build --build-opensearch # Build OS images only
+  $(basename "$0") build --image-mode prod --koha-version 26.11.00 --koha-ref v26.11.00 --build-koha
   $(basename "$0") backup                   # Create a backup in ./backups
   $(basename "$0") backup --output /tmp/koha-backup.tar.gz
   $(basename "$0") restore backups/koha-backup-YYYYMMDDTHHMMSSZ.tar.gz
@@ -1070,6 +1155,18 @@ fi
 # Parse remaining options
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --image-mode)
+      [[ $# -ge 2 ]] || die "--image-mode requires a value: dev|prod"
+      KOHA_IMAGE_MODE="$2"
+      shift ;;
+    --koha-version)
+      [[ $# -ge 2 ]] || die "--koha-version requires a value"
+      KOHA_RELEASE_VERSION="$2"
+      shift ;;
+    --koha-ref)
+      [[ $# -ge 2 ]] || die "--koha-ref requires a value"
+      KOHA_RELEASE_REF="$2"
+      shift ;;
     --build-opensearch)  BUILD_OPENSEARCH=true ;;
     --build-koha)        BUILD_KOHA=true ;;
     --build)             BUILD_OPENSEARCH=true; BUILD_KOHA=true ;;
@@ -1109,6 +1206,8 @@ case "${ALPINE_BOOTSTRAP_PROFILE}" in
   *) die "Invalid --bootstrap-profile '${ALPINE_BOOTSTRAP_PROFILE}'. Use resume or full." ;;
 esac
 
+configure_koha_mode
+
 # ---------------------------------------------------------------------------
 # Execute
 # ---------------------------------------------------------------------------
@@ -1118,13 +1217,19 @@ echo -e "${BOLD}${CYAN}╔══════════════════
 echo -e "${BOLD}${CYAN}║   Alpine Koha Stack Manager        ║${RESET}"
 echo -e "${BOLD}${CYAN}╚════════════════════════════════════╝${RESET}"
 echo ""
+log "Mode: ${KOHA_IMAGE_MODE} | Compose project: ${KOHA_COMPOSE_PROJECT}"
+if [[ "${KOHA_IMAGE_MODE}" == "prod" ]]; then
+  log "Prod image: ${KOHA_ALPINE_PROD_IMAGE_TAG} | Ref: ${KOHA_RELEASE_REF}"
+fi
 
 case "${COMMAND}" in
 
   start)
     check_prereqs
     [[ "${PREPARE_DB_CLIENT_TLS}" == true ]] && prepare_mariadb_client_tls
-    ensure_koha_source
+    if [[ "${KOHA_IMAGE_MODE}" == "dev" ]]; then
+      ensure_koha_source
+    fi
     [[ "${BUILD_OPENSEARCH}" == true ]] && build_opensearch
     [[ "${BUILD_KOHA}"       == true ]] && build_koha
     ensure_opensearch_certs
@@ -1199,7 +1304,9 @@ case "${COMMAND}" in
   restart)
     check_prereqs
     [[ "${PREPARE_DB_CLIENT_TLS}" == true ]] && prepare_mariadb_client_tls
-    ensure_koha_source
+    if [[ "${KOHA_IMAGE_MODE}" == "dev" ]]; then
+      ensure_koha_source
+    fi
     hdr "Quick restart (OpenSearch stays up)"
     warn "Assumes OpenSearch cluster is already running and green."
     wait_db_ready
@@ -1245,7 +1352,9 @@ case "${COMMAND}" in
       # No specific target → build everything
       BUILD_OPENSEARCH=true; BUILD_KOHA=true
     fi
-    [[ "${BUILD_KOHA}" == true ]] && ensure_koha_source
+    if [[ "${BUILD_KOHA}" == true && "${KOHA_IMAGE_MODE}" == "dev" ]]; then
+      ensure_koha_source
+    fi
     [[ "${BUILD_OPENSEARCH}" == true ]] && build_opensearch
     [[ "${BUILD_KOHA}"       == true ]] && build_koha
     ok "Build complete."
