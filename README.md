@@ -178,7 +178,7 @@ First, bring the OpenSearch image with `docker pull opensearchproject/opensearch
 Second, create the necessary credential files. Run the `opensearch_local_certificates_creator.sh` script. This script will take into consideration the existing environment variables, and based on that will generate the necessary certificate files in the `./OpenSearch-3.6/assets/ssl` subfolder. At the moment of first run, the `.OpenSearch-3.6/assets/opensearch/data` subfolder will be created containing the corresponding data for each node of the cluster.
 
 The following details are useful in case you run into trouble with the OpenSearch cluster.
-If you modified the password used for OpenSearch, this meaning the values of `ELASTIC_OPTION` and as a consequence also the value of `OPENSEARCH_INITIAL_ADMIN_PASSWORD` in the `env/.env` file, you need to make sure you modify the value of `OPENSEARCH_INITIAL_ADMIN_PASSWORD` in the `.env` file in the OpenSearch-3.6 subfolder. Remember that if you have modified the password for the aforementioned environment variables you MUST run the `opensearch_local_certificates_creator.sh` script. Otherwise, the cluster is not forming. Node `os01` errors out. Create also the `OpenSearch-3.6/assets/ssl` subfolder if not found.
+If you modified the password used for OpenSearch, this meaning the values of `ELASTIC_OPTION` and as a consequence also the value of `OPENSEARCH_INITIAL_ADMIN_PASSWORD` in the `env/.env` file, make sure you modify the value of `OPENSEARCH_INITIAL_ADMIN_PASSWORD` in the `.env` file in the OpenSearch-3.6 subfolder as well. Remember that if you have modified the password for the aforementioned environment variables you MUST run the `opensearch_local_certificates_creator.sh` script. Otherwise, the cluster is not forming. Node `os01` errors out. Create also the `OpenSearch-3.6/assets/ssl` subfolder if not found.
 
 **Warning:** do not create or replace files under `OpenSearch-3.6/assets/ssl/` manually. OpenSearch expects `root-ca.pem`, `admin.pem`, and the per-node PEM files to be regular files, not directories. If a cert path is missing when Docker Compose starts, Docker can create a directory at that path and OpenSearch will abort with an error like `.../root-ca.pem - is a directory`. Always regenerate the certificate set with `opensearch_local_certificates_creator.sh` instead of creating placeholders by hand.
 
@@ -187,18 +187,18 @@ Requirements for a viable password for OpenSearch:
 - minimum length 10
 - uppercase + lowercase + digit + special character
 
-**OpenSearch password:** `OPENSEARCH_INITIAL_ADMIN_PASSWORD` in `env/.env` file and `OPENSEARCH_INITIAL_ADMIN_PASSWORD` in the `OpenSearch-3.6/.env` file must match. Both files ship with the same default value: `test@Cici24#ANA`. Verify also the `./OpenSearch-3.6/assets/dashboards/opensearch_dashboards.yml` file to hve the same password: `opensearch.password: "test@Cici24#ANA"`. Otherwise you will get into a credential drift, and your OpenSearch cluster will not form.
+**OpenSearch password:** `OPENSEARCH_INITIAL_ADMIN_PASSWORD` in `env/.env` file and `OPENSEARCH_INITIAL_ADMIN_PASSWORD` in the `OpenSearch-3.6/.env` file must match. Both files ship with the same default value: `test@Cici24#ANA`. Verify also the `./OpenSearch-3.6/assets/dashboards/opensearch_dashboards.yml` file to have the same password: `opensearch.password: "test@Cici24#ANA"`. Otherwise you will get into a credential drift, and your OpenSearch cluster will not form.
 
 The OpenSearch-3.6 folder provides you with two important scripts that help raising the cluster:
 
 - `raise-from-ground-up.sh`, and
 - `restart-to-clear-cluster.sh`.
 
-The first should be run prior to anything else, and the second when you made some mistake and you lost track. Rememeber that this is very useful to make a wet rehersal for the OpenSearch cluster. If all is ok, bring it down with `docker compose down -v --remove-orphans`. The real creation of the cluster is on `./stack-alpine.sh start` script job.
+The first should be run prior to anything else, and the second when you made some mistake and you lost track. Remember that this is very useful to make a wet rehearsal for the OpenSearch cluster. If all is okay, bring it down with `docker compose down -v --remove-orphans`. The real creation of the cluster is on `./stack-alpine.sh start` script job.
 
 #### OpenSearch credential drift note (important)
 
-If `OPENSEARCH_INITIAL_ADMIN_PASSWORD` drifts between `env/.env` and `OpenSearch-3.6/.env`, OpenSearch can stay green while Basic Auth starts failing with HTTP 401. The `os01` healthcheck is certificate-based, so it will not detect this on its own.
+If `OPENSEARCH_INITIAL_ADMIN_PASSWORD` drifts between `env/.env` and `OpenSearch-3.6/.env`, OpenSearch can stay green while Basic Auth starts failing with HTTP 401. The `os01` health check is certificate-based, so it will not detect this on its own.
 
 Symptoms are usually:
 
@@ -232,7 +232,7 @@ docker exec -it <koha-container-name> bash
 koha-elasticsearch --rebuild -d -b -a <instance-name>
 ```
 
-Use your actual Koha container name and instance name. For this repository the instance is commonly `kohadev`. for example `docker exec -it koha-docker-koha-1 bash` followed by `koha-elasticsearch --rebuild -d -b -a kohadev`.
+Use your actual Koha container name and instance name. For this repository the instance is commonly `kohadev` for example `docker exec -it koha-docker-koha-1 bash` followed by `koha-elasticsearch --rebuild -d -b -a kohadev`.
 
 Keep these values aligned every time you rotate credentials:
 
@@ -740,7 +740,6 @@ EXTRA_APT=                          # Additional Alpine packages
 
 The container runs these phases automatically:
 
-```
 1. [db] Database initialization (MariaDB)
 2. [env] Environment setup & validation
 3. [perl] Perl module loading & verification
@@ -749,7 +748,6 @@ The container runs these phases automatically:
 6. [apache] Web server startup (CGI mode)
 7. [services] Background services (RabbitMQ, Memcached)
 8. [bootstrap-complete] HTTP endpoints ready
-```
 
 **Timing:** ~140 seconds from `docker compose up` to "ready to be enjoyed!"
 
@@ -833,8 +831,8 @@ This project now supports two explicit image/run contexts from the same codebase
 
 | Mode | Build target | Source layout | Compose files used | Typical use |
 |------|--------------|---------------|--------------------|-------------|
-| Development | `dev-runtime` | Host source is bind-mounted (`SYNC_REPO` -> `/kohadevbox/koha`) | `docker-compose-alpinekoha.yml` | Day-to-day coding, patching, fast iteration |
-| Production | `prod-runtime` | Koha source is baked into image layers at a fixed ref | `docker-compose-alpinekoha.yml` + `docker-compose.prod.yml` | Immutable versioned runtime and release deployment |
+| Development | `dev-runtime` | Host source is bind-mounted (`SYNC_REPO` -> `/kohadevbox/koha`); `VOLUME` declared so compose bind-mount takes precedence | `docker-compose-alpinekoha.yml` | Day-to-day coding, patching, fast iteration |
+| Production | `prod-runtime` | Koha source baked into image layers at a fixed ref; no `VOLUME` so the baked tree is visible at runtime | `docker-compose-alpinekoha.yml` + `docker-compose.prod.yml` | Immutable versioned runtime and release deployment |
 
 Important behavior differences:
 
@@ -865,32 +863,51 @@ Use this for immutable, version-pinned runtime builds.
 
 ```bash
 # Build fixed-version prod image (baked source, no source bind mount)
+# For a released version, --koha-ref is the git tag (e.g. v26.05.01-1):
+./stack-alpine.sh build \
+  --image-mode prod \
+  --koha-version 26.05.01-1 \
+  --koha-ref v26.05.01-1 \
+  --build-koha
+
+# For a pre-release / development version, use the branch name as ref:
 ./stack-alpine.sh build \
   --image-mode prod \
   --koha-version 26.11.00 \
-  --koha-ref v26.11.00 \
+  --koha-ref main \
   --build-koha
 
 # Start stack in prod mode with the same version/ref
 ./stack-alpine.sh start \
   --image-mode prod \
   --koha-version 26.11.00 \
-  --koha-ref v26.11.00
+  --koha-ref main
 ```
 
 What these flags control:
 
 1. `--image-mode prod` enables `docker-compose.prod.yml` override.
 2. `--koha-version` sets the release label (used for tag/project naming).
-3. `--koha-ref` pins the Koha Git ref baked into the image.
+3. `--koha-ref` pins the Koha Git ref baked into the image. For released versions this is a git tag (e.g. `v26.05.01-1`); for unreleased versions use the development branch (`main`).
 
 ### Optional direct Docker Compose usage (without stack script)
 
 If you need manual compose control for production mode:
 
 ```bash
+# Released version:
+KOHA_RELEASE_VERSION=26.05.01-1 \
+KOHA_RELEASE_REF=v26.05.01-1 \
+KOHA_ALPINE_PROD_IMAGE_TAG=kosson/koha-alpine-prod:26.05.01-1 \
+docker compose \
+  -f docker-compose-alpinekoha.yml \
+  -f docker-compose.prod.yml \
+  --env-file env/.env \
+  up -d --build
+
+# Pre-release / development version:
 KOHA_RELEASE_VERSION=26.11.00 \
-KOHA_RELEASE_REF=v26.11.00 \
+KOHA_RELEASE_REF=main \
 KOHA_ALPINE_PROD_IMAGE_TAG=kosson/koha-alpine-prod:26.11.00 \
 docker compose \
   -f docker-compose-alpinekoha.yml \
@@ -1135,7 +1152,9 @@ docker compose -f docker-compose-alpinekoha.yml exec koha \
 | Perl | CPAN modules | 38+ modules | Text::CSV_XS, Email::*, XML::*, DBIx::*, MARC::*, JSON::* |
 | Apache | Web server | apache2, apache2-utils, mod_rewrite, mod_cgi | CGI interface |
 | Node.js | Frontend | nodejs, npm, yarn | asset build pipeline |
-| Runtime | Final image | All above | Complete Koha stack |
+| `koha-base` | Shared final image (no VOLUME) | All above | Complete Koha stack, run.sh, templates, misc4dev |
+| `dev-runtime` | Dev image (thin wrapper) | inherits `koha-base` | Adds `VOLUME /kohadevbox/koha` for source bind-mount |
+| `prod-runtime` | Prod image | inherits `koha-base` | Bakes Koha source via `git fetch`; no VOLUME so files persist at runtime |
 
 ### SSL/TLS Flow
 
@@ -1498,10 +1517,11 @@ The procedure below is the canonical deployment path.
 
 ```bash
 # 1. Build a fixed-version production image (baked Koha source)
+#    Use a git tag for released versions, or 'main' for pre-release builds.
 ./stack-alpine.sh build \
   --image-mode prod \
   --koha-version 26.11.00 \
-  --koha-ref v26.11.00 \
+  --koha-ref main \
   --build-koha
 
 # 2. (Optional) Push the resulting image tag to registry
@@ -1511,7 +1531,7 @@ docker push kosson/koha-alpine-prod:26.11.00
 ./stack-alpine.sh start \
   --image-mode prod \
   --koha-version 26.11.00 \
-  --koha-ref v26.11.00
+  --koha-ref main
 
 # 4. Verify services and endpoints
 ./stack-alpine.sh status
@@ -1525,7 +1545,7 @@ If you need to deploy without the stack wrapper:
 
 ```bash
 KOHA_RELEASE_VERSION=26.11.00 \
-KOHA_RELEASE_REF=v26.11.00 \
+KOHA_RELEASE_REF=main \
 KOHA_ALPINE_PROD_IMAGE_TAG=kosson/koha-alpine-prod:26.11.00 \
 docker compose \
   -f docker-compose-alpinekoha.yml \
@@ -1542,7 +1562,7 @@ Use the previous known-good production tag and restart in prod mode:
 ./stack-alpine.sh start \
   --image-mode prod \
   --koha-version 26.11.00 \
-  --koha-ref v26.11.00
+  --koha-ref main
 ```
 
 To rollback, replace those values with the earlier version/ref pair.

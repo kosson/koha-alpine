@@ -1,4 +1,4 @@
-FROM alpine:3.24.1 AS dev-runtime
+FROM alpine:3.24.1 AS koha-base
 
 # File Author / Maintainer
 LABEL maintainer="kosson@gmail.com"
@@ -589,9 +589,6 @@ RUN chmod 0755 /etc/init.d/apache2
 RUN mkdir -p /kohadevbox
 WORKDIR /kohadevbox
 
-# Keep the Alpine image aligned with the existing dev container layout.
-VOLUME /kohadevbox/koha
-
 COPY files-alpine/run.sh /kohadevbox/
 COPY apply-patches.sh /kohadevbox/
 COPY patches /kohadevbox/patches
@@ -624,7 +621,11 @@ EXPOSE 6001 8080 8081
 
 CMD ["/bin/bash", "/kohadevbox/run.sh"]
 
-FROM dev-runtime AS prod-runtime
+# dev-runtime: thin wrapper that declares the koha source volume for bind-mount at runtime.
+FROM koha-base AS dev-runtime
+VOLUME /kohadevbox/koha
+
+FROM koha-base AS prod-runtime
 
 ARG KOHA_GIT_URL=https://git.koha-community.org/Koha-community/Koha.git
 ARG KOHA_GIT_REF=v25.11.05-1
