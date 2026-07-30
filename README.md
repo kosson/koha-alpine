@@ -111,24 +111,54 @@ If the cluster is raised and green (message in Terminal: `[raise-from-ground-up]
 
 #### Step 4: Build and start Koha stack
 
-```bash
-# Build image (first run or after Dockerfile changes)
-docker compose -f docker-compose-alpinekoha.yml build
-```
+There are two runtime modes. Pick the one that matches your intent before building.
 
-This command will build your Koha image adding to this blueprint all the resources needed when the container will be sprung up into existence. Mind you it take a fair bit of time.
+**Mode A — Development (default, source mounted from host)**
+
+Use this when you are actively editing Koha code. The `./koha` directory from your machine is bind-mounted into the container at runtime, so changes are visible immediately without rebuilding.
 
 ```bash
-# Prepare MariaDB TLS client cert/key and auto-wire env
+# Build the dev image (target: dev-runtime, ~5-10 min first time)
+./stack-alpine.sh build --image-mode dev --build-koha
+
+# Prepare MariaDB TLS client cert/key and auto-wire env/.env
 ./stack-alpine.sh tls-client-cert
+
+# Start the full managed stack in dev mode
+./stack-alpine.sh start --image-mode dev
 ```
 
-The next step is to start everything running the following command:
+`--image-mode dev` is the default, so you may omit it if you are not switching between modes.
+
+**Mode B — Production (Koha source baked into the image at a fixed released version)**
+
+Use this when you want an immutable, version-pinned runtime that does not depend on a local source directory. The Koha source tree is fetched from the community git at build time using a released tag and stored inside the image.
 
 ```bash
-# Start full managed stack
-./stack-alpine.sh start
+# Build the prod image from a released Koha tag (~10-15 min, fetches source from git)
+./stack-alpine.sh build \
+  --image-mode prod \
+  --koha-version 26.05.01-1 \
+  --koha-ref v26.05.01-1 \
+  --build-koha
+
+# Prepare MariaDB TLS client cert/key and auto-wire env/.env
+./stack-alpine.sh tls-client-cert
+
+# Start the full managed stack in prod mode with the same version and ref
+./stack-alpine.sh start \
+  --image-mode prod \
+  --koha-version 26.05.01-1 \
+  --koha-ref v26.05.01-1
 ```
+
+`--koha-ref` must be an existing git tag. To find the latest available tag:
+
+```bash
+git ls-remote --tags https://git.koha-community.org/Koha-community/Koha.git | grep "refs/tags/v2" | sort -V | tail -10
+```
+
+> **Not sure which mode to pick?** Start with Mode A. It is faster to set up, easier to troubleshoot, and is what most developers use day-to-day. Switch to Mode B when you need a fixed, deployable artifact.
 
 #### Step 5: Wait, verify, then login
 
@@ -859,36 +889,38 @@ Notes:
 
 ### Build and start in Production context (fixed Koha version)
 
-Use this for immutable, version-pinned runtime builds.
+Use this for immutable, version-pinned runtime builds. Always use a released git tag as `--koha-ref` for production. Pre-release branches (`main`) are only appropriate for development/staging images.
 
 ```bash
-# Build fixed-version prod image (baked source, no source bind mount)
-# For a released version, --koha-ref is the git tag (e.g. v26.05.01-1):
+# Build a stable released prod image — --koha-ref is the git tag for that release:
 ./stack-alpine.sh build \
   --image-mode prod \
   --koha-version 26.05.01-1 \
   --koha-ref v26.05.01-1 \
   --build-koha
 
-# For a pre-release / development version, use the branch name as ref:
-./stack-alpine.sh build \
-  --image-mode prod \
-  --koha-version 26.11.00 \
-  --koha-ref main \
-  --build-koha
-
-# Start stack in prod mode with the same version/ref
+# Start the stack in prod mode with the same version and ref:
 ./stack-alpine.sh start \
   --image-mode prod \
-  --koha-version 26.11.00 \
-  --koha-ref main
+  --koha-version 26.05.01-1 \
+  --koha-ref v26.05.01-1
 ```
 
 What these flags control:
 
 1. `--image-mode prod` enables `docker-compose.prod.yml` override.
-2. `--koha-version` sets the release label (used for tag/project naming).
-3. `--koha-ref` pins the Koha Git ref baked into the image. For released versions this is a git tag (e.g. `v26.05.01-1`); for unreleased versions use the development branch (`main`).
+2. `--koha-version` sets the release label (used for image tag and compose project naming).
+3. `--koha-ref` pins the Koha Git ref baked into the image. Always use the git tag for the release (e.g. `v26.05.01-1`). Available tags can be verified with `git ls-remote --tags https://git.koha-community.org/Koha-community/Koha.git`.
+
+> **Pre-release / development builds only:** if no stable tag exists yet for the target version (e.g. 26.11 before November 2026), pass `--koha-ref main` to build from the development branch. Do not use this in production.
+>
+> ```bash
+> ./stack-alpine.sh build \
+>   --image-mode prod \
+>   --koha-version 26.11.00 \
+>   --koha-ref main \
+>   --build-koha
+> ```
 
 ### Optional direct Docker Compose usage (without stack script)
 
@@ -1515,23 +1547,24 @@ The procedure below is the canonical deployment path.
 
 ### Deployment Steps
 
+Substitute `<VERSION>` and `<TAG>` with the target Koha release (e.g. `26.05.01-1` / `v26.05.01-1`).
+
 ```bash
-# 1. Build a fixed-version production image (baked Koha source)
-#    Use a git tag for released versions, or 'main' for pre-release builds.
+# 1. Build a fixed-version production image using the released git tag
 ./stack-alpine.sh build \
   --image-mode prod \
-  --koha-version 26.11.00 \
-  --koha-ref main \
+  --koha-version 26.05.01-1 \
+  --koha-ref v26.05.01-1 \
   --build-koha
 
-# 2. (Optional) Push the resulting image tag to registry
-docker push kosson/koha-alpine-prod:26.11.00
+# 2. (Optional) Push the resulting image tag to a registry
+docker push kosson/koha-alpine-prod:26.05.01-1
 
-# 3. Start stack in production mode with the exact same version/ref
+# 3. Start the stack in production mode with the exact same version and ref
 ./stack-alpine.sh start \
   --image-mode prod \
-  --koha-version 26.11.00 \
-  --koha-ref main
+  --koha-version 26.05.01-1 \
+  --koha-ref v26.05.01-1
 
 # 4. Verify services and endpoints
 ./stack-alpine.sh status
@@ -1544,9 +1577,9 @@ curl http://localhost:8081/
 If you need to deploy without the stack wrapper:
 
 ```bash
-KOHA_RELEASE_VERSION=26.11.00 \
-KOHA_RELEASE_REF=main \
-KOHA_ALPINE_PROD_IMAGE_TAG=kosson/koha-alpine-prod:26.11.00 \
+KOHA_RELEASE_VERSION=26.05.01-1 \
+KOHA_RELEASE_REF=v26.05.01-1 \
+KOHA_ALPINE_PROD_IMAGE_TAG=kosson/koha-alpine-prod:26.05.01-1 \
 docker compose \
   -f docker-compose-alpinekoha.yml \
   -f docker-compose.prod.yml \
@@ -1556,16 +1589,16 @@ docker compose \
 
 ### Rollback Pattern
 
-Use the previous known-good production tag and restart in prod mode:
+To roll back, restart in prod mode with the previous known-good version and tag:
 
 ```bash
 ./stack-alpine.sh start \
   --image-mode prod \
-  --koha-version 26.11.00 \
-  --koha-ref main
+  --koha-version 26.05.00 \
+  --koha-ref v26.05.00
 ```
 
-To rollback, replace those values with the earlier version/ref pair.
+Replace those values with whichever earlier version/ref pair was last confirmed good.
 
 ### Scaling & Load Balancing
 
