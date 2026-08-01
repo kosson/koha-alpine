@@ -201,17 +201,13 @@ Do not implement the full 941-line feature set (TLS, Zebra cluster, HTTPS site g
 `koha-shell` is a Perl script. It:
 
 1. Reads `/etc/default/koha-common` for `PERL5LIB`.
-
 2. Calls `. /usr/share/koha/bin/koha-functions.sh; if is_git_install $instance; then echo 1; fi` via backtick shell-out.
-
 3. Constructs a `sudo --preserve-env --login -u $instance-koha env ... /bin/sh` command.
 
 **Problems on Alpine**:
 
 - `/etc/default/koha-common` exists (staged by `build-alpine-package.sh`), so the read works.
-
 - The backtick call to `is_git_install` sources `koha-functions.sh` which calls `daemon` and `start-stop-daemon` — but `is_git_install` itself does not exercise those paths. It only reads `koha-conf.xml` and returns 1 if it looks like a git install. This path is safe.
-
 - `sudo` is installed. The `sudo -u $instance-koha env KOHA_CONF=... PERL5LIB=... /bin/sh -c 'cd ...; /bin/sh'` command works on Alpine if the sudoers file is set up correctly. Phase 3 already handles the sudoers template.
 
 **Conclusion**: `koha-shell` as-is is likely functional on Alpine with the existing sudoers setup. No Alpine override is needed for Phase 4 unless `is_git_install` detection causes a mismatch.
