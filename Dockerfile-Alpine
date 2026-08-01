@@ -93,6 +93,7 @@ RUN apk add --no-cache \
     perl-yaml-libyaml \
     pwgen \
     rabbitmq-server \
+    readline-dev \
     sed \
     shadow \
     sudo \
@@ -101,6 +102,16 @@ RUN apk add --no-cache \
     unzip \
     wget \
     xmlstarlet
+
+# Build and install YAZ (Z39.50/SRU toolkit) from source on Alpine musl
+ENV YAZ_VERSION=5.34.0
+RUN wget https://ftp.indexdata.com/pub/yaz/yaz-${YAZ_VERSION}.tar.gz -O /tmp/yaz.tar.gz \
+    && tar -xzf /tmp/yaz.tar.gz -C /tmp \
+    && cd /tmp/yaz-${YAZ_VERSION} \
+    && CFLAGS="-std=gnu17 -Wno-error=implicit-function-declaration -D_GNU_SOURCE" ./configure --prefix=/usr --sysconfdir=/etc \
+    && make -j$(nproc) \
+    && make install \
+    && rm -rf /tmp/yaz*
 
 RUN npm install -g yarn gulp-cli
 
@@ -187,164 +198,8 @@ RUN cpanm --notest Search::Elasticsearch
 # Alpine 3.24 lacks a packaged DBIx::Class.
 RUN cpanm --notest DBIx::Class
 
-# Alpine 3.24 repositories currently do not ship YAZ (yaz-config/libyaz-dev),
-# which prevents building Net::Z3950::ZOOM. Provide a minimal shim so Koha
-# bootstrap scripts can compile; Z39.50 functionality is tracked separately.
-RUN mkdir -p /usr/local/share/perl5/site_perl \
-    && cat >/usr/local/share/perl5/site_perl/ZOOM.pm <<'EOF'
-package ZOOM;
-
-our $VERSION = '0.00-alpine-shim';
-
-sub import {
-    my $caller = caller;
-    no strict 'refs';
-    *{"${caller}::create"} = \&create;
-}
-
-sub create {
-    my ($obj) = @_;
-    return $obj;
-}
-
-sub Connection {
-    my ($options) = @_;
-    return ZOOM::Connection->new($options);
-}
-
-sub event {
-    return 0;
-}
-
-package ZOOM::Options;
-
-sub new {
-    my ($class) = @_;
-    return bless { options => {} }, $class;
-}
-
-sub option {
-    my ( $self, $key, $value ) = @_;
-    $self->{options}->{$key} = $value;
-    return 1;
-}
-
-package ZOOM::Connection;
-
-sub new {
-    my ( $class, $options ) = @_;
-    return bless {
-        options    => $options,
-        last_event => 11,
-    }, $class;
-}
-
-sub connect {
-    return 1;
-}
-
-sub errcode {
-    return 0;
-}
-
-sub errmsg {
-    return '';
-}
-
-sub search {
-    return ZOOM::ResultSet->new();
-}
-
-sub scan {
-    return ZOOM::ResultSet->new();
-}
-
-sub last_event {
-    my ($self) = @_;
-    return $self->{last_event};
-}
-
-sub destroy {
-    return 1;
-}
-
-package ZOOM::ResultSet;
-
-sub new {
-    my ($class) = @_;
-    return bless {}, $class;
-}
-
-sub size {
-    return 0;
-}
-
-sub sort {
-    return 0;
-}
-
-sub record {
-    return ZOOM::Record->new();
-}
-
-sub display_term {
-    return ( '', 0 );
-}
-
-sub destroy {
-    return 1;
-}
-
-package ZOOM::Record;
-
-sub new {
-    my ($class) = @_;
-    return bless {}, $class;
-}
-
-sub raw {
-    return '';
-}
-
-package ZOOM::Query::CCL2RPN;
-
-sub new {
-    my ( $class, $query, $conn ) = @_;
-    return bless { query => $query, conn => $conn }, $class;
-}
-
-package ZOOM::Query::CQL;
-
-sub new {
-    my ( $class, $query, $conn ) = @_;
-    return bless { query => $query, conn => $conn }, $class;
-}
-
-package ZOOM::Query::PQF;
-
-sub new {
-    my ( $class, $query, $conn ) = @_;
-    return bless { query => $query, conn => $conn }, $class;
-}
-
-package ZOOM::Event;
-
-use constant {
-    ZOOM_EVENT_CONNECT => 1,
-    ZOOM_EVENT_SEND_DATA => 2,
-    ZOOM_EVENT_RECV_DATA => 3,
-    ZOOM_EVENT_TIMEOUT => 4,
-    ZOOM_EVENT_UNKNOWN => 5,
-    ZOOM_EVENT_ACCEPT => 6,
-    ZOOM_EVENT_CONNECT_LOST => 7,
-    ZOOM_EVENT_SEND_APDU => 8,
-    ZOOM_EVENT_RECV_APDU => 9,
-    ZOOM_EVENT_RECV_RECORD => 10,
-    ZEND => 11,
-};
-
-1;
-EOF
+# Native compilation of Z39.50/SRU Perl module against compiled YAZ library
+RUN cpanm --notest Net::Z3950::ZOOM
 
 # Debian-era Koha staging scripts expect these filesystem targets to exist.
 RUN mkdir -p \
@@ -614,8 +469,16 @@ RUN cd /kohadevbox \
 
 # Add the Alpine-specific misc4dev helper without changing the upstream clone layout.
 COPY files-alpine/misc4dev/cp_alpine_files.pl /kohadevbox/misc4dev/cp_alpine_files.pl
+COPY scripts/build-alpine-package.sh /usr/local/bin/build-alpine-package.sh
+COPY koha /tmp/koha-build-src
 
-RUN chmod +x /kohadevbox/misc4dev/cp_alpine_files.pl
+RUN chmod +x /kohadevbox/misc4dev/cp_alpine_files.pl /usr/local/bin/build-alpine-package.sh
+
+# Phase 2 compliance: stage Koha assets during image build for all runtime modes.
+RUN /usr/local/bin/build-alpine-package.sh /tmp/koha-build-src \
+    && rm -rf /tmp/koha-build-src
+
+ENV SKIP_RUNTIME_ASSET_COPY=yes
 
 EXPOSE 6001 8080 8081
 
@@ -647,5 +510,8 @@ RUN rm -rf /kohadevbox/koha \
 # Pre-install JS dependencies at build time to reduce runtime startup cost.
 RUN cd /kohadevbox/koha \
     && yarn install --frozen-lockfile
+
+# Perform build-time asset staging for immutable production image
+RUN /usr/local/bin/build-alpine-package.sh /kohadevbox/koha
 
 ENV SKIP_YARN_INSTALL=yes

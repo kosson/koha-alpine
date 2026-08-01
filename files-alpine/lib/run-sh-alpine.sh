@@ -105,18 +105,9 @@ run_koha_shell() {
 }
 
 copy_runtime_files() {
-    if [ -x "${BUILD_DIR}/misc4dev/cp_alpine_files.pl" ]; then
-        perl "${BUILD_DIR}/misc4dev/cp_alpine_files.pl" \
-            --instance          "${KOHA_INSTANCE}" \
-            --koha_dir          "${BUILD_DIR}/koha" \
-            --gitify_dir        "${BUILD_DIR}/gitify"
-        return 0
-    fi
-
-    perl "${BUILD_DIR}/misc4dev/cp_debian_files.pl" \
-        --instance          "${KOHA_INSTANCE}" \
-        --koha_dir          "${BUILD_DIR}/koha" \
-        --gitify_dir        "${BUILD_DIR}/gitify"
+    # Phase 2 compliance: runtime asset staging is removed and must happen only at image build time.
+    echo "[copy_runtime_files] Runtime asset staging disabled; using build-time staged assets."
+    return 0
 }
 
 enable_instance_services() {

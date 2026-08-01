@@ -26,6 +26,7 @@ fi
 
 SUITES=(
     "${TESTS_DIR}/test_dockerfile_perl_deps_static.sh"
+    "${TESTS_DIR}/test_phase2_build_staging_static.sh"
     "${TESTS_DIR}/test_stack_sh_static.sh"
     "${TESTS_DIR}/test_run_sh_static.sh"
     "${TESTS_DIR}/test_db_detection_unit.sh"
@@ -37,6 +38,7 @@ SUITES=(
 
 SUITE_LABELS=(
     "Static analysis         (Dockerfile Perl deps)"
+    "Static analysis         (Phase 2 build-time staging)"
     "Static analysis         (stack-alpine backup/restore)"
     "Static analysis         (files-alpine/run.sh)"
     "Unit tests              (mock mysql)"
