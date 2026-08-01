@@ -105,9 +105,25 @@ run_koha_shell() {
 }
 
 copy_runtime_files() {
-    # Phase 2 compliance: runtime asset staging is removed and must happen only at image build time.
-    echo "[copy_runtime_files] Runtime asset staging disabled; using build-time staged assets."
-    return 0
+    # Phase 2 compliance: prod images skip this via SKIP_RUNTIME_ASSET_COPY=yes (set in prod-runtime).
+    # Dev images run staging at container start against the bind-mounted koha source.
+    if [ "${SKIP_RUNTIME_ASSET_COPY}" = "yes" ]; then
+        echo "[copy_runtime_files] Build-time assets pre-staged; skipping runtime copy."
+        return 0
+    fi
+
+    /usr/local/bin/build-alpine-package.sh "${BUILD_DIR}/koha"
+}
+
+# Phase 3: render the Apache vhost from the project-owned dual-mode template.
+render_vhost() {
+    local instance=$1
+    mkdir -p /etc/apache2/sites-available
+    envsubst "${VARS_TO_SUB}" \
+        < "${BUILD_DIR}/templates/koha-vhost.conf.in" \
+        > "/etc/apache2/sites-available/${instance}.conf"
+    chmod 644 "/etc/apache2/sites-available/${instance}.conf"
+    echo "[render_vhost] Wrote /etc/apache2/sites-available/${instance}.conf (KOHA_PATH=${KOHA_PATH})"
 }
 
 enable_instance_services() {

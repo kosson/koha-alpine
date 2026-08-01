@@ -463,22 +463,17 @@ RUN sed -i 's/\r$//' /kohadevbox/run.sh \
 # Helper repositories used by the Koha development workflow.
 RUN cd /kohadevbox \
     && git clone https://gitlab.com/koha-community/koha-misc4dev.git misc4dev \
-    && git clone https://gitlab.com/koha-community/koha-gitify.git gitify \
     && git clone https://gitlab.com/koha-community/qa-test-tools.git qa-test-tools \
+    && mkdir -p gitify \
+    && printf '#!/bin/sh\n# Phase 3: koha-gitify eliminated; no-op stub\nexit 0\n' > gitify/koha-gitify \
+    && chmod 0755 gitify/koha-gitify \
     && chown -R 1000 misc4dev gitify qa-test-tools
 
 # Add the Alpine-specific misc4dev helper without changing the upstream clone layout.
 COPY files-alpine/misc4dev/cp_alpine_files.pl /kohadevbox/misc4dev/cp_alpine_files.pl
 COPY scripts/build-alpine-package.sh /usr/local/bin/build-alpine-package.sh
-COPY koha /tmp/koha-build-src
 
 RUN chmod +x /kohadevbox/misc4dev/cp_alpine_files.pl /usr/local/bin/build-alpine-package.sh
-
-# Phase 2 compliance: stage Koha assets during image build for all runtime modes.
-RUN /usr/local/bin/build-alpine-package.sh /tmp/koha-build-src \
-    && rm -rf /tmp/koha-build-src
-
-ENV SKIP_RUNTIME_ASSET_COPY=yes
 
 EXPOSE 6001 8080 8081
 
@@ -514,4 +509,5 @@ RUN cd /kohadevbox/koha \
 # Perform build-time asset staging for immutable production image
 RUN /usr/local/bin/build-alpine-package.sh /kohadevbox/koha
 
+ENV SKIP_RUNTIME_ASSET_COPY=yes
 ENV SKIP_YARN_INSTALL=yes

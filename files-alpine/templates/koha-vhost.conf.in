@@ -1,0 +1,55 @@
+# Phase 3 dual-mode vhost: rendered once from KOHA_PATH; no post-boot gitify rewrite needed.
+# Intranet VirtualHost
+<VirtualHost *:${KOHA_INTRANET_PORT}>
+    ServerName  ${KOHA_INTRANET_FQDN}
+    DocumentRoot ${KOHA_PATH}/koha-tmpl/intranet-tmpl
+    ScriptAlias  /cgi-bin/koha/ ${KOHA_PATH}/
+    Alias /doc/ /usr/share/doc/
+    SetEnv KOHA_CONF /etc/koha/sites/${KOHA_INSTANCE}/koha-conf.xml
+    SetEnv PERL5LIB  ${KOHA_PATH}:${KOHA_LIB_PATH}
+    SetEnv MEMCACHED_SERVERS memcached:11211
+    SetEnv MEMCACHED_NAMESPACE ${KOHA_INSTANCE}
+    Include /etc/koha/apache-shared.conf
+    Include /etc/koha/apache-shared-intranet.conf
+    <IfModule mod_rewrite.c>
+        RewriteEngine On
+    </IfModule>
+    <Directory "${KOHA_PATH}">
+        Options +ExecCGI +FollowSymlinks
+        AddHandler cgi-script .pl
+        Require all granted
+    </Directory>
+    <Directory "${KOHA_PATH}/koha-tmpl">
+        Options +FollowSymlinks
+        Require all granted
+    </Directory>
+    ErrorLog  /var/log/koha/${KOHA_INSTANCE}/intranet-error.log
+    CustomLog /var/log/koha/${KOHA_INSTANCE}/intranet-access.log combined
+</VirtualHost>
+
+# OPAC VirtualHost
+<VirtualHost *:${KOHA_OPAC_PORT}>
+    ServerName  ${KOHA_OPAC_FQDN}
+    DocumentRoot ${KOHA_PATH}/koha-tmpl/opac-tmpl
+    ScriptAlias  /cgi-bin/koha/opac/ ${KOHA_PATH}/opac/
+    SetEnv KOHA_CONF /etc/koha/sites/${KOHA_INSTANCE}/koha-conf.xml
+    SetEnv PERL5LIB  ${KOHA_PATH}:${KOHA_LIB_PATH}
+    SetEnv MEMCACHED_SERVERS memcached:11211
+    SetEnv MEMCACHED_NAMESPACE ${KOHA_INSTANCE}
+    Include /etc/koha/apache-shared.conf
+    Include /etc/koha/apache-shared-opac.conf
+    <IfModule mod_rewrite.c>
+        RewriteEngine On
+    </IfModule>
+    <Directory "${KOHA_PATH}/opac">
+        Options +ExecCGI +FollowSymlinks
+        AddHandler cgi-script .pl
+        Require all granted
+    </Directory>
+    <Directory "${KOHA_PATH}/koha-tmpl">
+        Options +FollowSymlinks
+        Require all granted
+    </Directory>
+    ErrorLog  /var/log/koha/${KOHA_INSTANCE}/opac-error.log
+    CustomLog /var/log/koha/${KOHA_INSTANCE}/opac-access.log combined
+</VirtualHost>

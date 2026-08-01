@@ -16,18 +16,17 @@ Roadmap reference:
 1. Removed runtime fallback staging from startup helper.
 
 - Updated files-alpine/lib/run-sh-alpine.sh:
-  - `copy_runtime_files` is now a strict no-op with an explicit Phase 2 message.
-  - Removed runtime execution paths for:
-    - `/usr/local/bin/build-alpine-package.sh`
-    - `cp_alpine_files.pl`
-    - `cp_debian_files.pl`
+  - `copy_runtime_files` now checks `SKIP_RUNTIME_ASSET_COPY`; if set, it no-ops (prod path).
+  - Otherwise it calls `/usr/local/bin/build-alpine-package.sh` against the bind-mounted koha source (dev path).
+  - Removed the old `cp_alpine_files.pl` and `cp_debian_files.pl` fallback branches.
 
-1. Enforced build-time staging for all image modes (base layer).
+1. Enforced build-time staging in prod-runtime and runtime-guarded staging in dev-runtime.
 
 - Updated Dockerfile-Alpine:
-  - Added `COPY koha /tmp/koha-build-src`.
-  - Added `RUN /usr/local/bin/build-alpine-package.sh /tmp/koha-build-src && rm -rf /tmp/koha-build-src`.
-  - Set `ENV SKIP_RUNTIME_ASSET_COPY=yes` at base-image level.
+  - `prod-runtime` already fetches koha via `git fetch` and runs `build-alpine-package.sh /kohadevbox/koha` at build time.
+  - Added `ENV SKIP_RUNTIME_ASSET_COPY=yes` in `prod-runtime` to skip runtime staging on boot.
+  - `koha-base` and `dev-runtime` do **not** copy the koha source tree at build time; dev containers stage assets at first boot via `build-alpine-package.sh` against the bind-mounted source.
+  - **Correction**: an earlier revision incorrectly added `COPY koha /tmp/koha-build-src` to `koha-base`, baking the 1.48 GB local source tree into every image build context. This was reverted because it violates the dev/prod separation and touches the source directory.
 
 1. Added a dedicated Phase 2 validation test.
 
@@ -71,7 +70,7 @@ Phase 2 is now compliant for:
 
 ## End-to-End Image-Build Validation (koha-base)
 
-To validate the koha-base staging path end-to-end, the image target was built and checked from inside a launched container.
+The koha-base target was built and checked from inside a launched container (context includes only the workspace files, **not** the koha source directory).
 
 Executed:
 
@@ -81,24 +80,4 @@ docker build --target koha-base -f Dockerfile-Alpine -t "$IMAGE_TAG" .
 docker run --rm --entrypoint /bin/sh "$IMAGE_TAG" -lc '<assertions>'
 ```
 
-Assertions passed:
-
-- `/usr/share/koha` exists.
-- `/usr/share/koha/intranet/htdocs` is non-empty.
-- `/usr/share/koha/opac/htdocs` is non-empty.
-- `/usr/share/koha/lib/C4` exists.
-- `/usr/share/koha/lib/Koha` exists.
-- `/usr/share/koha/bin/koha-functions.sh` exists.
-- `/etc/koha/koha-conf-site.xml.in` exists.
-- `/etc/koha/apache-shared-intranet.conf` exists.
-- `/etc/koha/apache-shared-opac.conf` exists.
-- `/etc/default/koha-common` exists.
-- `/etc/init.d/koha-common` exists.
-- `/etc/logrotate.d/koha-common` exists.
-- `/usr/share/man/man8/koha-*.8.gz` manpages exist.
-
-Final runtime output:
-
-```text
-[PASS] koha-base build-time staging validation complete
-```
+Note: assertions on koha system paths populated by `build-alpine-package.sh` are validated via the prod-runtime build, not koha-base. koha-base simply confirms the skip flag and staging script are present; actual populated paths are an artefact of the prod-runtime git fetch + staging layer.

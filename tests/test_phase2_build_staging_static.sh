@@ -43,15 +43,17 @@ echo "TAP version 14"
 echo "# Static checks for Phase 2 build-time asset staging compliance"
 echo ""
 
-assert_contains "copy_runtime_files function still exists" "copy_runtime_files()" "${HELPER_SH}"
-assert_contains "runtime staging is explicitly disabled" "Runtime asset staging disabled; using build-time staged assets." "${HELPER_SH}"
-assert_not_contains "no runtime cp_alpine_files.pl fallback remains" "cp_alpine_files.pl" "${HELPER_SH}"
-assert_not_contains "no runtime cp_debian_files.pl fallback remains" "cp_debian_files.pl" "${HELPER_SH}"
-assert_not_contains "no runtime build-alpine-package execution remains" '/usr/local/bin/build-alpine-package.sh "${BUILD_DIR}/koha"' "${HELPER_SH}"
+# --- run-sh-alpine.sh checks ---
+assert_contains "copy_runtime_files exists" "copy_runtime_files()" "${HELPER_SH}"
+assert_contains "SKIP_RUNTIME_ASSET_COPY guard present" "SKIP_RUNTIME_ASSET_COPY" "${HELPER_SH}"
+assert_contains "dev path calls build-alpine-package.sh" '/usr/local/bin/build-alpine-package.sh' "${HELPER_SH}"
+assert_not_contains "no cp_alpine_files.pl fallback remains" "cp_alpine_files.pl" "${HELPER_SH}"
+assert_not_contains "no cp_debian_files.pl fallback remains" "cp_debian_files.pl" "${HELPER_SH}"
 
-assert_contains "Dockerfile copies Koha tree for base build-time staging" "COPY koha /tmp/koha-build-src" "${DOCKERFILE}"
-assert_contains "Dockerfile runs build-time staging in base stage" "RUN /usr/local/bin/build-alpine-package.sh /tmp/koha-build-src" "${DOCKERFILE}"
-assert_contains "runtime copy skip flag set at base image level" "ENV SKIP_RUNTIME_ASSET_COPY=yes" "${DOCKERFILE}"
+# --- Dockerfile checks ---
+assert_not_contains "koha source directory not copied into build context" "COPY koha /tmp/koha-build-src" "${DOCKERFILE}"
+assert_contains "prod-runtime stages assets from fetched git source" "RUN /usr/local/bin/build-alpine-package.sh /kohadevbox/koha" "${DOCKERFILE}"
+assert_contains "SKIP_RUNTIME_ASSET_COPY set in prod-runtime" "ENV SKIP_RUNTIME_ASSET_COPY=yes" "${DOCKERFILE}"
 
 echo ""
 echo "1..${_N}"
