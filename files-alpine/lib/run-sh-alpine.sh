@@ -117,9 +117,11 @@ copy_runtime_files() {
     # Runtime staging copies Debian koha-* scripts into /usr/sbin.
     # Re-apply Alpine overrides so they remain the active command targets.
     if [ -d "${BUILD_DIR}/files-alpine/scripts" ]; then
-        if [ -f "${BUILD_DIR}/files-alpine/scripts/koha-create" ]; then
-            install -m 0755 "${BUILD_DIR}/files-alpine/scripts/koha-create" /usr/sbin/koha-create
-        fi
+        for script_name in koha-create koha-plack koha-worker koha-functions.sh; do
+            if [ -f "${BUILD_DIR}/files-alpine/scripts/${script_name}" ]; then
+                install -m 0755 "${BUILD_DIR}/files-alpine/scripts/${script_name}" "/usr/sbin/${script_name}"
+            fi
+        done
     fi
 }
 

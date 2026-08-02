@@ -105,6 +105,7 @@ RUN apk add --no-cache \
     busybox-extras
 
 # Build and install YAZ (Z39.50/SRU toolkit) from source on Alpine musl
+#FIXME: is there a reason for not using the last version which is yaz-5.37.3.tar.gz	2026-05-20 15:57 ?
 ENV YAZ_VERSION=5.34.0
 RUN wget https://ftp.indexdata.com/pub/yaz/yaz-${YAZ_VERSION}.tar.gz -O /tmp/yaz.tar.gz \
     && tar -xzf /tmp/yaz.tar.gz -C /tmp \
@@ -443,7 +444,10 @@ RUN sed -i 's/\r$//' /kohadevbox/run.sh \
     && chmod +x /kohadevbox/run.sh /kohadevbox/apply-patches.sh
 
 # Install Alpine-owned admin script overrides ahead of runtime staging.
-RUN install -m 0755 /kohadevbox/files-alpine/scripts/koha-create /usr/sbin/koha-create
+RUN install -m 0755 /kohadevbox/files-alpine/scripts/koha-create /usr/sbin/koha-create \
+    && install -m 0755 /kohadevbox/files-alpine/scripts/koha-plack /usr/sbin/koha-plack \
+    && install -m 0755 /kohadevbox/files-alpine/scripts/koha-worker /usr/sbin/koha-worker \
+    && install -m 0755 /kohadevbox/files-alpine/scripts/koha-functions.sh /usr/sbin/koha-functions.sh
 
 # Helper repositories used by the Koha development workflow.
 RUN cd /kohadevbox \
@@ -495,7 +499,10 @@ RUN cd /kohadevbox/koha \
 RUN /usr/local/bin/build-alpine-package.sh /kohadevbox/koha
 
 # Re-apply Alpine overrides after Debian script staging in production image.
-RUN install -m 0755 /kohadevbox/files-alpine/scripts/koha-create /usr/sbin/koha-create
+RUN install -m 0755 /kohadevbox/files-alpine/scripts/koha-create /usr/sbin/koha-create \
+    && install -m 0755 /kohadevbox/files-alpine/scripts/koha-plack /usr/sbin/koha-plack \
+    && install -m 0755 /kohadevbox/files-alpine/scripts/koha-worker /usr/sbin/koha-worker \
+    && install -m 0755 /kohadevbox/files-alpine/scripts/koha-functions.sh /usr/sbin/koha-functions.sh
 
 ENV SKIP_RUNTIME_ASSET_COPY=yes
 ENV SKIP_YARN_INSTALL=yes

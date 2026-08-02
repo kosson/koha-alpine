@@ -40,6 +40,7 @@ flowchart TD
 ```
 
 ### 1.1 Debian Command & Service Shims (`Dockerfile-Alpine`)
+
 - **Apache Control Shims (`apachectl`, `a2ensite`, `a2dissite`, `a2enmod`, `a2dismod`)**:
   - *Current State*: `Dockerfile-Alpine` injects shell scripts into `/usr/local/bin` that mock Debian `a2enmod` (no-op), `a2ensite` (manually creating symlinks in `/etc/apache2/sites-enabled`), and `apachectl` (returning hardcoded string `mpm_itk_module (shared)`).
   - *Debt*: Relies on Apache module structures (`mpm_itk`) that do not exist natively in Alpine. Distorts Apache configuration management.

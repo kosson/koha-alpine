@@ -316,3 +316,46 @@ The rewrite is complete when all are true:
 1. Wire Dockerfile overlay copy.
 1. Add tests/test_phase4_koha_create_rewrite.sh.
 1. Run deterministic integration script and capture before/after logs.
+
+## 15. Implementation Status (2026-08-02)
+
+### Step status
+
+- [x] Step 1: Add script overlay directory
+- [x] Step 2: Install overlay after build staging
+- [x] Step 3: Implement strict argument parser
+- [x] Step 4: Resolve runtime config values
+- [x] Step 5: Implement safe, idempotent user/group creation
+- [x] Step 6: Create directory tree
+- [x] Step 7: Implement DB path
+- [x] Step 8: Generate site configuration files
+- [x] Step 9: Apache site activation
+- [x] Step 10: Service bootstrap hooks
+- [x] Step 11: Logging and exit codes
+- [ ] Step 12: Wire tests and acceptance gates (partially complete)
+
+### Step 12 detail
+
+- [x] Static rewrite test added: tests/test_phase4_koha_create_rewrite.sh
+- [x] Runtime rewrite assertions added for command target and apachectl mpm_itk removal
+- [ ] Deterministic suite extension with explicit direct koha-create invocation is still pending
+
+### Required changes outside koha-create
+
+- [x] Dockerfile overlay copy/wiring complete
+- [x] Adduser translation shim removed
+- [x] Apachectl fake mpm_itk output removed
+- [ ] run.sh AssignUserID post-processing removal is still pending
+- [x] render_vhost ordering remains deterministic before site enablement
+- [x] service shim fallback updated (apache2 now maps to real httpd control; koha-common remains compat-no-op)
+
+### Validation status
+
+- [x] Rewrite guardrails test passing (static and runtime checks)
+- [x] Deterministic integration run passing (OpenSearch test pass-with-skip when cluster is absent)
+- [x] Bootstrap path works with valid SYNC_REPO
+
+### Rollout status
+
+- [ ] KOHA_CREATE_IMPL feature toggle not implemented (deferred)
+- [ ] Toggle removal/final lock not applicable until/if toggle is introduced

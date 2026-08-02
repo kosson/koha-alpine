@@ -6,7 +6,11 @@ set -eu
 
 [ -r /etc/default/koha-common ] && . /etc/default/koha-common
 [ -r /etc/koha/koha-sites.conf ] && . /etc/koha/koha-sites.conf
-[ -r /usr/share/koha/bin/koha-functions.sh ] && . /usr/share/koha/bin/koha-functions.sh
+if [ -r /usr/sbin/koha-functions.sh ]; then
+    . /usr/sbin/koha-functions.sh
+elif [ -r /usr/share/koha/bin/koha-functions.sh ]; then
+    . /usr/share/koha/bin/koha-functions.sh
+fi
 
 log_info() { echo "[koha-create-alpine] $*"; }
 log_warn() { echo "[koha-create-alpine] WARNING: $*" >&2; }

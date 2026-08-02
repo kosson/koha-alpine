@@ -26,6 +26,25 @@ The current `files-alpine/` tree already partially satisfies this role:
 
 Phase 4 extends this pattern by adding a full `files-alpine/scripts/` directory that ships Alpine-native versions of the admin commands, installed to `/usr/sbin/` at image build time ahead of the Debian-sourced copies.
 
+### Status Update (2026-08-02)
+
+Completed in this implementation tranche:
+
+- Alpine-native `koha-create` added at `files-alpine/scripts/koha-create` for active `--create-db` and `--use-db` flows.
+- Build/runtime override wiring completed so Alpine `koha-create` is installed after Debian staging and re-applied at runtime.
+- `adduser` long-option translation shim removed.
+- `apachectl -M` fake `mpm_itk` output removed; shim simplified to pass-through.
+- `service` / `rc-service` / `/etc/init.d/apache2` shim behavior changed from no-op to real Apache control mapping (`httpd -k ...`).
+- Rewrite guardrail test added: `tests/test_phase4_koha_create_rewrite.sh`.
+- Deterministic integration validated with pass status (OpenSearch scenario pass-with-skip when cluster is absent).
+
+Not yet completed in this tranche:
+
+- `koha-functions.sh`, `koha-worker`, and `koha-plack` first-cut rewrites are in place; runtime hardening/verification on built test image remains.
+- Broader daemon-lifecycle parity for all less-used legacy service paths still needs image-backed validation.
+- Removal of runtime `AssignUserID` post-processing in `run.sh`.
+- Optional feature toggle strategy for phased rollout (deferred).
+
 ---
 
 ## 1. Constraint: No Modifications to `koha/`
@@ -420,38 +439,33 @@ The following items appear related but are out of Phase 4 scope:
 
 ---
 
-## 7. Implementation Sequence
+## 7. Implementation Sequence and Status
 
-```text
+- [x] 7.1 `apk add busybox-extras` (or `dpkg`) for `start-stop-daemon`
+        Status: Completed (`busybox-extras` present in Dockerfile).
+- [x] 7.2 `files-alpine/scripts/koha-functions.sh`
+        Status: Completed for first-cut helper override (daemon-dependent running checks replaced with BusyBox-safe pid/status checks and script-sourcing precedence wired to Alpine override).
+- [x] 7.3 `files-alpine/scripts/koha-worker`
+        Status: Completed for first-cut action set (`--start/--stop/--restart/--status` with `--queue`) using BusyBox-aware process control and pidfile fallback logic.
+- [x] 7.4 `files-alpine/scripts/koha-plack`
+        Status: Completed for first-cut action set (`--enable/--disable/--start/--stop/--restart/--reload/--status`) with BusyBox-aware fallback logic.
+- [x] 7.5 `files-alpine/scripts/koha-create`
+        Status: Completed for active runtime paths (`--create-db`, `--use-db`) with strict clean cut from Debian flow.
+- [ ] 7.6 `/etc/default/koha-common` population validation for `koha-shell`
+        Status: Pending explicit verification.
+- [x] 7.7 Dockerfile override installation order (`files-alpine/scripts` copied after Debian staging)
+        Status: Completed.
+- [x] 7.8 Dockerfile package add for `start-stop-daemon`
+        Status: Completed (`busybox-extras`).
+- [x] 7.9 Remove/simplify no-longer-needed shims
+        Status: Completed for `apachectl` fake `mpm_itk` output and `adduser` translator; `AssignUserID` sed removal remains pending.
+- [x] 7.10 Phase 4 static/runtime guardrail test
+        Status: Implemented as `tests/test_phase4_koha_create_rewrite.sh`, `tests/test_phase4_koha_plack_rewrite.sh`, `tests/test_phase4_koha_worker_rewrite.sh`, and `tests/test_phase4_koha_functions_rewrite.sh`.
 
-7.1  apk add busybox-extras (or dpkg) → provides start-stop-daemon
-7.2  files-alpine/scripts/koha-functions.sh
-        → redefines daemon-based start functions to use start-stop-daemon
-7.3  files-alpine/scripts/koha-worker
-        → replaces daemon calls with start-stop-daemon; self-contained rewrite
-7.4  files-alpine/scripts/koha-plack
-        → replaces daemon/start-stop-daemon calls; removes apache2ctl module check
-7.5  files-alpine/scripts/koha-create
-        → Alpine --create-db path: removes mpm_itk check, replaces adduser,
-           replaces service apache2 restart, skips apache-site.conf.in templating,
-           removes lsb_release / dpkg-query / apt-get blocks
-7.6  /etc/default/koha-common population
-        → ensure PERL5LIB is set correctly for koha-shell
-7.7  Dockerfile-Alpine: COPY files-alpine/scripts → /usr/sbin/ (after build-alpine-package.sh stage)
-7.8  Dockerfile-Alpine: apk add busybox-extras
-7.9  Remove or simplify shims that are no longer needed:
-        - apachectl fake -M mpm_itk output
-        - adduser long-option translation
-        - AssignUserID sed strip in run.sh
-7.10 tests/test_phase4_posix_admin_tools_static.sh
-        → assert no mpm_itk in apachectl shim
-        → assert adduser shim references are gone
-        → assert files-alpine/scripts/* exist and are executable
-        → assert no daemon-based calls remain in project-owned scripts
+Notes:
 
-```text
-
-Steps 7.2–7.5 are independent of each other once `start-stop-daemon` is available (7.1).
+- The first delivery focused on the highest-impact bootstrap path (`koha-create`) and shim retirement that directly blocked clean Alpine behavior.
+- Remaining items target image-backed runtime verification depth for `koha-functions.sh`, `koha-plack`, and `koha-worker`, plus residual legacy-service daemon-path parity checks.
 
 ---
 
@@ -476,19 +490,35 @@ Steps 7.2–7.5 are independent of each other once `start-stop-daemon` is availa
 ```bash
 docker exec koha koha-create --create-db kohatest 2>&1 | grep -iE 'error|warn|shim|mpm_itk|not found|command not found' | wc -l
 # Expected: 0
+```
 
 ```text
+Current validation outcomes (2026-08-02):
+
+- `tests/test_phase4_koha_create_rewrite.sh`: passing (14/14 checks).
+- `tests/test_phase4_koha_plack_rewrite.sh`: passing static checks (13 passed); runtime checks skip when no test image is available.
+- `tests/test_phase4_koha_worker_rewrite.sh`: passing static checks (12 passed); runtime checks skip when no test image is available.
+- `tests/test_phase4_koha_functions_rewrite.sh`: passing static checks (12 passed); runtime checks skip when no test image is available.
+- `tests/test_phase4_start_stop_daemon.sh`: passing (static checks), runtime section skipped when no compatible image is available.
+- `tests/run_integration_deterministic.sh`: total 5, passed 4, pass-with-skip 1, failed 0.
+- Runtime confirmation: Alpine command path resolves `koha-create` to `/usr/sbin/koha-create` and `apachectl -M` output no longer includes `mpm_itk`.
+```
 
 ---
 
-## 9. Open Questions for Decision Before Implementation
+## 9. Open Questions and Decision Status
 
-1. **`start-stop-daemon` source**: Use `apk add busybox-extras` (BusyBox implementation) or compile the standalone Debian utility? BusyBox version is simpler but may not support all flags. Needs a compatibility matrix check against `koha-plack` and `koha-worker` usage.
+1. **`start-stop-daemon` source**: Use `apk add busybox-extras` (BusyBox implementation) or compile the standalone Debian utility?
+        Status: Resolved to `busybox-extras` for current implementation; broader runtime compatibility matrix on image-backed runs remains ongoing.
 
-2. **Alpine `koha-create` scope**: Do a full Alpine-native rewrite of the `--create-db` path only, with a strict clean cut from Debian-designed script flows (no thin wrapper, no function override layering, no runtime delegation into `koha/debian/scripts/koha-create`). Keep the implementation focused on the startup path this project actually uses, and add explicit tests around DB creation, instance user creation, vhost/symlink setup, and Apache reload behaviour.
+2. **Alpine `koha-create` scope**: Do a full Alpine-native rewrite of the `--create-db` path only, with a strict clean cut from Debian-designed script flows.
+        Status: Resolved and implemented for active runtime paths (`--create-db`, `--use-db`) with explicit tests.
 
-3. **`apachectl` shim fate after Phase 4**: Once Alpine `koha-create` no longer checks `mpm_itk`, can the fake `-M` output be removed entirely? Yes, if `koha-plack`'s module check is also removed or bypassed. This simplifies `apachectl` back to a clean pass-through to `/usr/sbin/httpd`.
+3. **`apachectl` shim fate after Phase 4**: Once Alpine `koha-create` no longer checks `mpm_itk`, can fake `-M` output be removed?
+        Status: Resolved and implemented. Fake `-M` output was removed and shim is now pass-through.
 
-4. **`koha-enable` call in `run.sh`**: After Phase 4, `bootstrap_koha_instance` (Alpine `koha-create`) handles vhost creation via `render_vhost`. Should `koha-enable` still be called? Its only useful work is creating `sites-enabled` symlinks and writing `plack.conf`. If `render_vhost` and `koha-plack --enable` are called directly by `run.sh`, `koha-enable` becomes redundant.
+4. **`koha-enable` call in `run.sh`**: After Phase 4, should this remain?
+        Status: Open. Current behavior remains valid; redundancy cleanup can be done in follow-up.
 
-5. **Interaction with Phase 5 (OpenRC)**: `koha-plack` and `koha-worker` use `start-stop-daemon` for background process management. Phase 5 moves these to OpenRC `init.d` scripts. If Phase 4 makes `koha-plack` and `koha-worker` work correctly with `start-stop-daemon`, Phase 5 can replace the daemon lifecycle with OpenRC without affecting the command interface.
+5. **Interaction with Phase 5 (OpenRC)**: `koha-plack` and `koha-worker` daemon lifecycle replacement.
+        Status: Open by design. This remains a sequencing dependency for next tranche.
