@@ -113,6 +113,14 @@ copy_runtime_files() {
     fi
 
     /usr/local/bin/build-alpine-package.sh "${BUILD_DIR}/koha"
+
+    # Runtime staging copies Debian koha-* scripts into /usr/sbin.
+    # Re-apply Alpine overrides so they remain the active command targets.
+    if [ -d "${BUILD_DIR}/files-alpine/scripts" ]; then
+        if [ -f "${BUILD_DIR}/files-alpine/scripts/koha-create" ]; then
+            install -m 0755 "${BUILD_DIR}/files-alpine/scripts/koha-create" /usr/sbin/koha-create
+        fi
+    fi
 }
 
 # Phase 3: render the Apache vhost from the project-owned dual-mode template.
