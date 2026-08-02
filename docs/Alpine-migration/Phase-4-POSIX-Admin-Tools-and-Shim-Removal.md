@@ -485,7 +485,7 @@ docker exec koha koha-create --create-db kohatest 2>&1 | grep -iE 'error|warn|sh
 
 1. **`start-stop-daemon` source**: Use `apk add busybox-extras` (BusyBox implementation) or compile the standalone Debian utility? BusyBox version is simpler but may not support all flags. Needs a compatibility matrix check against `koha-plack` and `koha-worker` usage.
 
-2. **Alpine `koha-create` scope**: Full rewrite of the `--create-db` path vs thin wrapper with function overrides? The thin-wrapper approach is more maintainable across Koha version upgrades; the full rewrite is more predictable and testable.
+2. **Alpine `koha-create` scope**: Do a full Alpine-native rewrite of the `--create-db` path only, with a strict clean cut from Debian-designed script flows (no thin wrapper, no function override layering, no runtime delegation into `koha/debian/scripts/koha-create`). Keep the implementation focused on the startup path this project actually uses, and add explicit tests around DB creation, instance user creation, vhost/symlink setup, and Apache reload behaviour.
 
 3. **`apachectl` shim fate after Phase 4**: Once Alpine `koha-create` no longer checks `mpm_itk`, can the fake `-M` output be removed entirely? Yes, if `koha-plack`'s module check is also removed or bypassed. This simplifies `apachectl` back to a clean pass-through to `/usr/sbin/httpd`.
 
