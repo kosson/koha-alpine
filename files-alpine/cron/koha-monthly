@@ -1,0 +1,21 @@
+#!/bin/sh
+# Koha monthly maintenance tasks — Alpine periodic cron.
+# Installed to /etc/periodic/monthly/koha-monthly by Dockerfile-Alpine.
+# Phase 5: Native Alpine crond integration.
+#
+# Run by crond via: run-parts /etc/periodic/monthly
+
+set -e
+
+KOHA_INSTANCE="${KOHA_INSTANCE:-kohadev}"
+export KOHA_CONF="/etc/koha/sites/${KOHA_INSTANCE}/koha-conf.xml"
+
+# Guard: skip silently if instance is not bootstrapped yet.
+[ -f "${KOHA_CONF}" ] || exit 0
+
+if command -v koha-shell >/dev/null 2>&1; then
+    # Archive old statistical data.
+    sudo -n koha-shell "${KOHA_INSTANCE}" -c \
+        'perl /usr/share/koha/bin/cronjobs/statistics.pl' \
+        >/dev/null 2>&1 || true
+fi

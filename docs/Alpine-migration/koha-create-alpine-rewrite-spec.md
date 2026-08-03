@@ -317,7 +317,7 @@ The rewrite is complete when all are true:
 1. Add tests/test_phase4_koha_create_rewrite.sh.
 1. Run deterministic integration script and capture before/after logs.
 
-## 15. Implementation Status (2026-08-02)
+## 15. Implementation Status (2026-08-03)
 
 ### Step status
 
@@ -332,20 +332,21 @@ The rewrite is complete when all are true:
 - [x] Step 9: Apache site activation
 - [x] Step 10: Service bootstrap hooks
 - [x] Step 11: Logging and exit codes
-- [ ] Step 12: Wire tests and acceptance gates (partially complete)
+- [x] Step 12: Wire tests and acceptance gates
 
 ### Step 12 detail
 
 - [x] Static rewrite test added: tests/test_phase4_koha_create_rewrite.sh
 - [x] Runtime rewrite assertions added for command target and apachectl mpm_itk removal
-- [ ] Deterministic suite extension with explicit direct koha-create invocation is still pending
+- [x] Static checks for `--db-user`, `--db-password`, `--db-name` CLI arg support added
+- [x] Live-container section added: `/etc/koha/passwd` entry, `koha-conf.xml` presence, idempotent `--use-db` re-invocation, no `Access denied` in re-invocation output
 
 ### Required changes outside koha-create
 
 - [x] Dockerfile overlay copy/wiring complete
 - [x] Adduser translation shim removed
 - [x] Apachectl fake mpm_itk output removed
-- [ ] run.sh AssignUserID post-processing removal is still pending
+- [ ] run.sh AssignUserID post-processing removal is still pending (deferred — retained as harmless safety net; see TRACKER 2026-08-03 Part 1)
 - [x] render_vhost ordering remains deterministic before site enablement
 - [x] service shim fallback updated (apache2 now maps to real httpd control; koha-common remains compat-no-op)
 
@@ -354,8 +355,10 @@ The rewrite is complete when all are true:
 - [x] Rewrite guardrails test passing (static and runtime checks)
 - [x] Deterministic integration run passing (OpenSearch test pass-with-skip when cluster is absent)
 - [x] Bootstrap path works with valid SYNC_REPO
+- [x] Argument-ordering bug fixed: `${KOHA_INSTANCE}` moved to after all flags in `bootstrap_koha_instance()` call so the CLI parser receives `--db-*` args correctly
+- [x] `--db-user`, `--db-password`, `--db-name` CLI args added to koha-create; passwd file written on first use
 
 ### Rollout status
 
-- [ ] KOHA_CREATE_IMPL feature toggle not implemented (deferred)
+- [ ] KOHA_CREATE_IMPL feature toggle not implemented (deferred — single implementation, no rollback path needed at this stage)
 - [ ] Toggle removal/final lock not applicable until/if toggle is introduced

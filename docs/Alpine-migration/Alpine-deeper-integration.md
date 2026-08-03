@@ -116,8 +116,6 @@ Modern container best practices isolate applications per container or process ra
      IncludeOptional /etc/apache2/conf.d/*.conf
      ```
 
----
-
 ### 3.2 Pillar 2: Native Build-Time Asset Staging (Eliminating `cp_debian_files.pl`)
 
 #### Current Problem:
@@ -148,8 +146,6 @@ System file installation must occur strictly during **Docker Image Build Time**,
      3. First-time instance configuration rendering (if `/etc/koha/sites/kohadev` does not exist).
      4. Service initialization.
 
----
-
 ### 3.3 Pillar 3: Native Environment-Aware Bootstrap & `koha-gitify` Elimination
 
 #### Current Problem:
@@ -179,8 +175,6 @@ Eliminate `koha-gitify` completely by making Koha configuration templates **envi
    - Eliminates external dependency on `gitlab.com/koha-community/koha-gitify.git`.
    - Clean, deterministic configuration generation in a single step.
 
----
-
 ### 3.4 Pillar 4: Native YAZ & Z39.50 / SRU Solution for Alpine musl
 
 #### Current Problem:
@@ -204,7 +198,6 @@ Compile native `libyaz` on Alpine musl libc and build the real `Net::Z3950::ZOOM
          && make install \
          && rm -rf /tmp/yaz*
      ```
-
 2. **Native Perl Module Compilation**:
    - With `yaz-config` available in `/usr/bin/yaz-config`, remove the dummy `ZOOM.pm` stub.
    - Install genuine Perl Z39.50 modules via CPAN or APK:
@@ -214,14 +207,14 @@ Compile native `libyaz` on Alpine musl libc and build the real `Net::Z3950::ZOOM
 3. **Outcome**:
    - Restores full Z39.50, SRU, and MARC record retrieval capabilities to Koha on Alpine.
 
----
-
 ### 3.5 Pillar 5: Native OpenRC Process Supervision & Scheduled Tasks
 
 #### Current Problem:
+
 Background daemons (`koha-plack`, `koha-worker`, `koha-indexer`) are started via unmonitored background shell calls in `run.sh`, while system cron tasks rely on Debian `/etc/cron.d/` layout.
 
 #### Native Alpine Solution:
+
 Implement standard Alpine **OpenRC** service scripts or **s6-overlay** process management with native Alpine `crond`.
 
 1. **Native OpenRC Service Definition (`/etc/init.d/koha-plack`)**:
@@ -240,7 +233,6 @@ Implement standard Alpine **OpenRC** service scripts or **s6-overlay** process m
        after apache2
    }
    ```
-
 2. **Native OpenRC Worker Service (`/etc/init.d/koha-worker`)**:
    ```sh
    #!/sbin/openrc-run
@@ -256,7 +248,6 @@ Implement standard Alpine **OpenRC** service scripts or **s6-overlay** process m
        need net rabbitmq
    }
    ```
-
 3. **Alpine Periodic Cron Tasks**:
    - Move scheduled tasks from Debian `/etc/cron.d/koha-common` to Alpine's native periodic directories:
      - `/etc/periodic/hourly/koha-hourly`
@@ -264,14 +255,14 @@ Implement standard Alpine **OpenRC** service scripts or **s6-overlay** process m
      - `/etc/periodic/monthly/koha-monthly`
    - Run `crond -b -l 2` inside the container to execute scheduled index updates, hold cleanups, and email notifications reliably.
 
----
-
 ### 3.6 Pillar 6: Systematic APK Package Strategy
 
 #### Current Problem:
+
 The Dockerfile uses a mixture of `apk add` and ad-hoc `cpanm --notest` statements.
 
 #### Native Alpine Solution:
+
 Structure package management into three distinct layers:
 
 1. **Layer A: Alpine Official APK Packages (`apk add`)**:
@@ -280,8 +271,6 @@ Structure package management into three distinct layers:
    Explicit list of Koha-specific Perl modules not yet present in Alpine 3.24 repos (e.g., `Auth::GoogleAuth`, `GD::Barcode`, `MARC::Record`, `Net::Z3950::ZOOM`, `Struct::Diff`).
 3. **Layer C: Node/Frontend Toolchain**:
    Pre-install `yarn` and `gulp-cli` globally, with `yarn install --frozen-lockfile` performed during Docker build phase for `prod-runtime`.
-
----
 
 ## 4. Phase-by-Phase Implementation Roadmap
 
@@ -323,12 +312,12 @@ gantt
 ### Phase 4: POSIX Admin Tools & Shim Removal
 - **Action**: Refactor `koha-create`, `koha-shell`, `koha-plack`, and `koha-worker` to native POSIX shell. Delete shim scripts (`a2ensite`, `a2enmod`, `adduser`, `daemon`, `init-functions`).
 - **Validation**: Run full instance bootstrap (`koha-create --create-db kohadev`) without any missing command warnings or shim interventions.
+- **Status (2026-08-03)**: ✅ Complete. All static guardrail tests pass (49/49). Alpine-native `koha-create`, `koha-plack`, `koha-worker`, and `koha-functions.sh` in place. `adduser` shim removed, `apachectl` fake `mpm_itk` removed. See [Phase-4-POSIX-Admin-Tools-and-Shim-Removal.md](Phase-4-POSIX-Admin-Tools-and-Shim-Removal.md).
 
 ### Phase 5: OpenRC Service Supervision & Cron Integration
 - **Action**: Add OpenRC init scripts for `koha-plack`, `koha-worker`, `apache2`, and `crond`.
 - **Validation**: Verify background workers automatically restart if terminated, and scheduled cron jobs execute via Alpine `crond`.
-
----
+- **Status (2026-08-03)**: ✅ Complete. All 41 TAP checks pass (35 static + 6 runtime, 0 skipped). crond confirmed running. Periodic scripts installed. Watchdog active. Full suite: 200 passed, 0 failed, 24 skipped. Three bugs fixed during runtime verification (MariaDB SSL, git hooks set -e, GIT_INSTALL unbound variable). See [Phase-5-OpenRC-Supervision-and-Cron-Integration.md](Phase-5-OpenRC-Supervision-and-Cron-Integration.md).
 
 ## 5. Architectural Comparison Matrix
 

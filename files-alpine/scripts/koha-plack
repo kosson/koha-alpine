@@ -394,15 +394,12 @@ check_env_and_warn() {
     missing_modules=""
     required_modules="headers proxy_http"
 
-    if command -v apache2ctl >/dev/null 2>&1; then
-        if ! apache2ctl -v 2>/dev/null | grep -q "Server version: Apache/2.4"; then
+    if command -v httpd >/dev/null 2>&1; then
+        if ! httpd -v 2>/dev/null | grep -q "Apache/2.4"; then
             log_warn "koha-plack expects Apache 2.4.x"
         fi
-    fi
-
-    if command -v apachectl >/dev/null 2>&1; then
         for module in $required_modules; do
-            if ! apachectl -M 2>/dev/null | grep -q "$module"; then
+            if ! httpd -M 2>/dev/null | grep -q "$module"; then
                 missing_modules="${missing_modules}${module} "
             fi
         done
@@ -416,6 +413,7 @@ check_env_and_warn() {
 do_instance() {
     name="$1"
 
+    GIT_INSTALL="${GIT_INSTALL:-}"   # default before adjust_paths_git_install calls is_git_install
     adjust_paths_git_install "$name"
     PERL5LIB="${PERL5LIB:-}:$KOHA_HOME/installer:$KOHA_HOME/lib/installer"
     if [ "$KOHA_BINDIR" = "misc" ]; then

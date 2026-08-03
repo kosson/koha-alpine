@@ -38,7 +38,9 @@ while ( my $line = <$fh> ) {
     chomp $line;
     $line =~ s|\s+| |;
     my ( $from, $to ) = split ' ', $line;
-    next unless $to; # TODO We could handle that
+    # Debian convention: no dest → strip leading "debian/tmp" to get absolute path
+    if ( !$to && $from =~ s|^debian/tmp||) { $to = $from; $from = "debian/tmp$from" }
+    next unless $to;
     next if $from =~ m|/tmp/|;
     next if $from =~ m|/tmp_docbook/|; # Done later
     $to = "/$to";

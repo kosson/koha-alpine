@@ -231,6 +231,9 @@ CLO_MEMCACHED_PREFIX=""
 CLO_TEMPLATE_CACHE_DIR=""
 CLO_UPLOAD_PATH=""
 CLO_TMP_PATH=""
+CLO_DB_USER=""
+CLO_DB_PASSWORD=""
+CLO_DB_NAME=""
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -255,6 +258,9 @@ while [ "$#" -gt 0 ]; do
         --mb-user) MESSAGE_BROKER_USER="$2"; shift 2 ;;
         --mb-pass) MESSAGE_BROKER_PASS="$2"; shift 2 ;;
         --mb-vhost) MESSAGE_BROKER_VHOST="$2"; shift 2 ;;
+        --db-user) CLO_DB_USER="$2"; shift 2 ;;
+        --db-password) CLO_DB_PASSWORD="$2"; shift 2 ;;
+        --db-name) CLO_DB_NAME="$2"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         --) shift; break ;;
         -*) die "Unsupported option: $1" ;;
@@ -320,6 +326,19 @@ fi
 
 [ -n "$CLO_DATABASE" ] && mysqldb="$CLO_DATABASE"
 [ -n "$CLO_DBHOST" ] && mysqlhost="$CLO_DBHOST"
+[ -n "$CLO_DB_USER" ] && mysqluser="$CLO_DB_USER"
+[ -n "$CLO_DB_PASSWORD" ] && mysqlpwd="$CLO_DB_PASSWORD"
+[ -n "$CLO_DB_NAME" ] && mysqldb="$CLO_DB_NAME"
+
+# When credentials are supplied as CLI args, write/refresh the passwd file so
+# other tools (koha-shell, etc.) can look them up without needing the caller to
+# pre-populate /etc/koha/passwd before invoking koha-create.
+if [ -n "$CLO_DB_USER" ] || [ -n "$CLO_DB_PASSWORD" ] || [ -n "$CLO_DB_NAME" ]; then
+    mkdir -p "$(dirname "$PASSWDFILE")"
+    { grep -v "^${name}:" "$PASSWDFILE" 2>/dev/null || true; } > "${PASSWDFILE}.tmp"
+    printf '%s:%s:%s:%s:%s\n' "$name" "$mysqluser" "$mysqlpwd" "$mysqldb" "$mysqlhost" >> "${PASSWDFILE}.tmp"
+    mv "${PASSWDFILE}.tmp" "$PASSWDFILE"
+fi
 
 if [ -z "$MESSAGE_BROKER_VHOST" ]; then
     MESSAGE_BROKER_VHOST="koha_${name}"
@@ -350,7 +369,7 @@ FLUSH PRIVILEGES;
 EOF
 else
     log_info "Using existing database for $name"
-    mysql --host="$mysqlhost" --user="$mysqluser" --password="$mysqlpwd" "$mysqldb" -e 'SELECT 1;' >/dev/null
+    mysql --skip-ssl --host="$mysqlhost" --user="$mysqluser" --password="$mysqlpwd" "$mysqldb" -e 'SELECT 1;' >/dev/null
 fi
 
 zebrapwd="$(rand_secret | cut -c1-16)"

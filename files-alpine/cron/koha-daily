@@ -1,0 +1,31 @@
+#!/bin/sh
+# Koha daily maintenance tasks — Alpine periodic cron.
+# Installed to /etc/periodic/daily/koha-daily by Dockerfile-Alpine.
+# Phase 5: Native Alpine crond integration.
+#
+# Run by crond via: run-parts /etc/periodic/daily
+
+set -e
+
+KOHA_INSTANCE="${KOHA_INSTANCE:-kohadev}"
+export KOHA_CONF="/etc/koha/sites/${KOHA_INSTANCE}/koha-conf.xml"
+
+# Guard: skip silently if instance is not bootstrapped yet.
+[ -f "${KOHA_CONF}" ] || exit 0
+
+if command -v koha-shell >/dev/null 2>&1; then
+    # Clean up old sessions, temporary tables, and expired data.
+    sudo -n koha-shell "${KOHA_INSTANCE}" -c \
+        'perl /usr/share/koha/bin/cronjobs/cleanup_database.pl' \
+        >/dev/null 2>&1 || true
+
+    # Cancel holds that have passed their expiry date.
+    sudo -n koha-shell "${KOHA_INSTANCE}" -c \
+        'perl /usr/share/koha/bin/cronjobs/cancel_expired_holds.pl' \
+        >/dev/null 2>&1 || true
+
+    # Send overdue notices to patrons.
+    sudo -n koha-shell "${KOHA_INSTANCE}" -c \
+        'perl /usr/share/koha/bin/cronjobs/overdue_notices.pl' \
+        >/dev/null 2>&1 || true
+fi

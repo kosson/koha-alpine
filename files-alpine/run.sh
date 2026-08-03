@@ -177,51 +177,7 @@ export __DB_TLS_CA_CERTIFICATE__="${KOHA_DB_TLS_CA_CERTIFICATE}"
 export __DB_TLS_CLIENT_CERTIFICATE__="${KOHA_DB_TLS_CLIENT_CERTIFICATE}"
 export __DB_TLS_CLIENT_KEY__="${KOHA_DB_TLS_CLIENT_KEY}"
 
-# TODO: Have bugs pushed so all this is a koha-create parameter
-echo "${KOHA_INSTANCE}:${DB_USER}:${DB_PASSWORD}:${DB_NAME}" > /etc/koha/passwd
-# TODO: Get rid of this hack with the relevant bug
-echo "[client]"                              > /etc/mysql/koha-common.cnf
-echo "host     = ${DB_HOSTNAME}"            >> /etc/mysql/koha-common.cnf
-echo "user     = root"                      >> /etc/mysql/koha-common.cnf
-echo "password = ${KOHA_DB_ROOT_PASSWORD}"  >> /etc/mysql/koha-common.cnf
-if [ "${KOHA_DB_USE_TLS}" = "yes" ]; then
-    echo "ssl      = on"                        >> /etc/mysql/koha-common.cnf
-    if [ -n "${KOHA_DB_TLS_CA_CERTIFICATE}" ]; then
-        echo "ssl-ca   = ${KOHA_DB_TLS_CA_CERTIFICATE}" >> /etc/mysql/koha-common.cnf
-    fi
-    if [ -n "${KOHA_DB_TLS_CLIENT_CERTIFICATE}" ]; then
-        echo "ssl-cert = ${KOHA_DB_TLS_CLIENT_CERTIFICATE}" >> /etc/mysql/koha-common.cnf
-    fi
-    if [ -n "${KOHA_DB_TLS_CLIENT_KEY}" ]; then
-        echo "ssl-key  = ${KOHA_DB_TLS_CLIENT_KEY}" >> /etc/mysql/koha-common.cnf
-    fi
-else
-    echo "ssl      = off"                       >> /etc/mysql/koha-common.cnf
-    echo "skip-ssl"                             >> /etc/mysql/koha-common.cnf
-fi
-cp /etc/mysql/koha-common.cnf /etc/mysql/debian.cnf
-chmod 600 /etc/mysql/debian.cnf
-
-
-echo "[client]"                          > /etc/mysql/koha_${KOHA_INSTANCE}.cnf
-echo "host     = ${DB_HOSTNAME}"        >> /etc/mysql/koha_${KOHA_INSTANCE}.cnf
-echo "user     = ${DB_USER}"            >> /etc/mysql/koha_${KOHA_INSTANCE}.cnf
-echo "password = ${DB_PASSWORD}"        >> /etc/mysql/koha_${KOHA_INSTANCE}.cnf
-if [ "${KOHA_DB_USE_TLS}" = "yes" ]; then
-    echo "ssl      = on"                    >> /etc/mysql/koha_${KOHA_INSTANCE}.cnf
-    if [ -n "${KOHA_DB_TLS_CA_CERTIFICATE}" ]; then
-        echo "ssl-ca   = ${KOHA_DB_TLS_CA_CERTIFICATE}" >> /etc/mysql/koha_${KOHA_INSTANCE}.cnf
-    fi
-    if [ -n "${KOHA_DB_TLS_CLIENT_CERTIFICATE}" ]; then
-        echo "ssl-cert = ${KOHA_DB_TLS_CLIENT_CERTIFICATE}" >> /etc/mysql/koha_${KOHA_INSTANCE}.cnf
-    fi
-    if [ -n "${KOHA_DB_TLS_CLIENT_KEY}" ]; then
-        echo "ssl-key  = ${KOHA_DB_TLS_CLIENT_KEY}" >> /etc/mysql/koha_${KOHA_INSTANCE}.cnf
-    fi
-else
-    echo "ssl      = off"                   >> /etc/mysql/koha_${KOHA_INSTANCE}.cnf
-    echo "skip-ssl"                         >> /etc/mysql/koha_${KOHA_INSTANCE}.cnf
-fi
+write_db_client_configs "${KOHA_INSTANCE}"
 
 # Get rid of Apache warnings
 if [ -f /etc/apache2/httpd.conf ]; then
@@ -409,7 +365,7 @@ if [ "${GIT_WORKTREE_SOURCE}" != "" ]; then
     echo "    [*] Added '${GIT_WORKTREE_SOURCE}' to safe directories"
 fi
 
-install_git_hooks "${GIT_BASE_DIR}"
+install_git_hooks "${GIT_BASE_DIR}" || echo "    [!] Git hooks setup skipped (permission denied — repo owned by host user)"
 
 # This needs to be done ONCE koha-create has run (i.e. kohadev-koha user exists)
 envsubst "$VARS_TO_SUB" < ${BUILD_DIR}/templates/apache2_envvars > /etc/apache2/envvars
@@ -423,9 +379,9 @@ else
     echo "[koha-enable] WARNING: koha-enable not available; skipping"
 fi
 
-if command -v a2ensite >/dev/null 2>&1; then
-    a2ensite ${KOHA_INSTANCE}.conf
-fi
+mkdir -p /etc/apache2/sites-enabled
+ln -sf "/etc/apache2/sites-available/${KOHA_INSTANCE}.conf" \
+       "/etc/apache2/sites-enabled/${KOHA_INSTANCE}.conf"
 
 cp /kohadevbox/koha/package.json /kohadevbox
 cp /kohadevbox/koha/yarn.lock    /kohadevbox
@@ -767,18 +723,14 @@ start_koha_service
 # Start apache2
 start_apache_service
 
+# Phase 5: Start Alpine crond for periodic maintenance tasks (/etc/periodic/).
+start_crond
+
 touch /ktd_ready
 touch /kohadevbox/koha/.alpine-bootstrap-complete
 echo "koha-testing-docker has started up and is ready to be enjoyed!"
 
-# start koha-reload-starman, if we have inotify installed
-#    if [ -f "/usr/bin/inotifywait" ]; then
-#        daemon  --verbose=1 \
-#            --name=reload-starman \
-#            --respawn \
-#            --delay=15 \
-#            --pidfiles=/var/run/koha/kohadev/ -- /kohadevbox/koha-reload-starman
-#    fi
-
-# TODO: We could use supervise as the main loop
-/bin/bash -c "trap : TERM INT; sleep infinity & wait"
+# Phase 5: Service watchdog — keeps koha-plack and koha-worker alive.
+# Replaces the old blocking-loop container-keep-alive pattern.  Handles SIGTERM/SIGINT
+# for graceful container shutdown.
+run_service_watchdog "${KOHA_INSTANCE}"

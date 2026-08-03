@@ -13,6 +13,42 @@ append_if_absent()
     fi
 }
 
+# Write /etc/mysql/koha-common.cnf (root creds) and /etc/mysql/koha_<instance>.cnf
+# (instance creds), honouring the KOHA_DB_USE_TLS flag.  Replaces the inline
+# echo chain that was in run.sh.
+write_db_client_configs() {
+    local instance="$1"
+    mkdir -p /etc/mysql
+
+    {
+        printf '[client]\nhost     = %s\nuser     = root\npassword = %s\n' \
+            "${DB_HOSTNAME}" "${KOHA_DB_ROOT_PASSWORD}"
+        if [ "${KOHA_DB_USE_TLS:-}" = "yes" ]; then
+            printf 'ssl      = on\n'
+            [ -n "${KOHA_DB_TLS_CA_CERTIFICATE:-}" ]     && printf 'ssl-ca   = %s\n' "${KOHA_DB_TLS_CA_CERTIFICATE}"
+            [ -n "${KOHA_DB_TLS_CLIENT_CERTIFICATE:-}" ] && printf 'ssl-cert = %s\n' "${KOHA_DB_TLS_CLIENT_CERTIFICATE}"
+            [ -n "${KOHA_DB_TLS_CLIENT_KEY:-}" ]         && printf 'ssl-key  = %s\n' "${KOHA_DB_TLS_CLIENT_KEY}"
+        else
+            printf 'ssl      = off\nskip-ssl\n'
+        fi
+    } > /etc/mysql/koha-common.cnf
+    cp /etc/mysql/koha-common.cnf /etc/mysql/debian.cnf
+    chmod 600 /etc/mysql/debian.cnf
+
+    {
+        printf '[client]\nhost     = %s\nuser     = %s\npassword = %s\n' \
+            "${DB_HOSTNAME}" "${DB_USER}" "${DB_PASSWORD}"
+        if [ "${KOHA_DB_USE_TLS:-}" = "yes" ]; then
+            printf 'ssl      = on\n'
+            [ -n "${KOHA_DB_TLS_CA_CERTIFICATE:-}" ]     && printf 'ssl-ca   = %s\n' "${KOHA_DB_TLS_CA_CERTIFICATE}"
+            [ -n "${KOHA_DB_TLS_CLIENT_CERTIFICATE:-}" ] && printf 'ssl-cert = %s\n' "${KOHA_DB_TLS_CLIENT_CERTIFICATE}"
+            [ -n "${KOHA_DB_TLS_CLIENT_KEY:-}" ]         && printf 'ssl-key  = %s\n' "${KOHA_DB_TLS_CLIENT_KEY}"
+        else
+            printf 'ssl      = off\nskip-ssl\n'
+        fi
+    } > "/etc/mysql/koha_${instance}.cnf"
+}
+
 install_os_packages() {
     if [ "$#" -eq 0 ]; then
         return 0
@@ -59,23 +95,6 @@ service_status_all() {
     fi
 
     echo "[service] No service status command available"
-}
-
-service_control() {
-    local action=$1
-    local name=$2
-
-    if command -v rc-service >/dev/null 2>&1; then
-        rc-service "$name" "$action" || true
-        return 0
-    fi
-
-    if command -v service >/dev/null 2>&1; then
-        service "$name" "$action" || true
-        return 0
-    fi
-
-    echo "[service] ${name} ${action}: no service manager available"
 }
 
 ensure_runtime_dirs() {
@@ -194,13 +213,17 @@ bootstrap_koha_instance() {
             echo "[koha-create] Detected existing database ${DB_NAME}; using --use-db"
         fi
 
-        if ! koha-create "${koha_create_mode}" "${KOHA_INSTANCE}" \
+        if ! koha-create "${koha_create_mode}" \
+            --db-user "${DB_USER}" \
+            --db-password "${DB_PASSWORD}" \
+            --db-name "${DB_NAME}" \
             --memcached-servers memcached:11211 \
             --mb-host "${MESSAGE_BROKER_HOST}" \
             --mb-port "${MESSAGE_BROKER_PORT}" \
             --mb-user "${MESSAGE_BROKER_USER}" \
             --mb-pass "${MESSAGE_BROKER_PASS}" \
-            --mb-vhost "${MESSAGE_BROKER_VHOST}"; then
+            --mb-vhost "${MESSAGE_BROKER_VHOST}" \
+            "${KOHA_INSTANCE}"; then
             echo "[koha-create] WARNING: bootstrap failed in Alpine compatibility mode; continuing to surface downstream blockers"
         fi
         return 0
@@ -264,4 +287,64 @@ install_git_hooks() {
         echo "    [*] Installing and setting hooks (${git_base_dir})"
         run_koha_shell "${KOHA_INSTANCE}" "mkdir -p ${git_base_dir}/.git/hooks/ktd ; cp ${BUILD_DIR}/git_hooks/* ${git_base_dir}/.git/hooks/ktd ; cd ${git_base_dir} ; git config --local core.hooksPath .git/hooks/ktd"
     fi
+}
+
+# Phase 5: Start Alpine crond for /etc/periodic/ maintenance tasks.
+start_crond() {
+    if command -v crond >/dev/null 2>&1; then
+        crond -b -l 2 2>/dev/null || true
+        echo "[crond] Alpine crond started (periodic tasks in /etc/periodic/)"
+    else
+        echo "[crond] WARNING: crond not available; scheduled maintenance tasks will not run"
+    fi
+}
+
+# Phase 5: Service watchdog — monitors koha-plack and koha-worker and restarts
+# them if they crash. Replaces the 'sleep infinity' blocking loop so that the
+# container can be kept alive while providing automatic service recovery.
+#
+# Only services that are observed as running when the watchdog starts will be
+# monitored; services that were not started are left alone.
+run_service_watchdog() {
+    local instance="${1:-kohadev}"
+    local interval="${2:-30}"
+    local _plack_expected=no
+    local _worker_expected=no
+    local _watchdog_sleep_pid=0
+
+    # Observe initial running state to determine what needs supervision.
+    if command -v koha-plack >/dev/null 2>&1; then
+        koha-plack --status "${instance}" >/dev/null 2>&1 && _plack_expected=yes || true
+    fi
+    if command -v koha-worker >/dev/null 2>&1; then
+        koha-worker --status "${instance}" >/dev/null 2>&1 && _worker_expected=yes || true
+    fi
+
+    echo "[watchdog] Service watchdog started (instance=${instance}, plack=${_plack_expected}, worker=${_worker_expected}, interval=${interval}s)"
+
+    # On SIGTERM/SIGINT: stop supervised services cleanly then exit.
+    trap 'echo "[watchdog] Shutdown signal received; stopping services...";
+          kill ${_watchdog_sleep_pid} 2>/dev/null || true;
+          command -v koha-plack  >/dev/null 2>&1 && koha-plack  --stop "'"${instance}"'" >/dev/null 2>&1 || true;
+          command -v koha-worker >/dev/null 2>&1 && koha-worker --stop "'"${instance}"'" >/dev/null 2>&1 || true;
+          echo "[watchdog] Done.";
+          exit 0' TERM INT
+
+    while true; do
+        if [ "${_plack_expected}" = "yes" ]; then
+            koha-plack --status "${instance}" >/dev/null 2>&1 || {
+                echo "[watchdog] koha-plack is down; restarting..."
+                koha-plack --start "${instance}" >/dev/null 2>&1 || true
+            }
+        fi
+        if [ "${_worker_expected}" = "yes" ]; then
+            koha-worker --status "${instance}" >/dev/null 2>&1 || {
+                echo "[watchdog] koha-worker is down; restarting..."
+                koha-worker --start "${instance}" >/dev/null 2>&1 || true
+            }
+        fi
+        sleep "${interval}" &
+        _watchdog_sleep_pid=$!
+        wait ${_watchdog_sleep_pid} || true
+    done
 }

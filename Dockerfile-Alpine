@@ -105,8 +105,7 @@ RUN apk add --no-cache \
     busybox-extras
 
 # Build and install YAZ (Z39.50/SRU toolkit) from source on Alpine musl
-#FIXME: is there a reason for not using the last version which is yaz-5.37.3.tar.gz	2026-05-20 15:57 ?
-ENV YAZ_VERSION=5.34.0
+ENV YAZ_VERSION=5.37.3
 RUN wget https://ftp.indexdata.com/pub/yaz/yaz-${YAZ_VERSION}.tar.gz -O /tmp/yaz.tar.gz \
     && tar -xzf /tmp/yaz.tar.gz -C /tmp \
     && cd /tmp/yaz-${YAZ_VERSION} \
@@ -229,51 +228,7 @@ RUN if [ -e /usr/share/xml/docbook/xsl-stylesheets-1.79.2/manpages/docbook.xsl ]
         ln -s /usr/share/xml/docbook/xsl-stylesheets-1.79.2 /usr/share/xml/docbook/stylesheet/docbook-xsl-ns; \
     fi
 
-# Provide Debian-like Apache control entrypoints for koha-create checks.
-RUN cat >/usr/sbin/apachectl <<'EOF'
-#!/bin/sh
-if [ "$1" = "-M" ]; then
-    exec /usr/sbin/httpd -M
-fi
-if [ "$1" = "-v" ]; then
-    echo "Server version: Apache/2.4 (Alpine compatibility shim)"
-    exit 0
-fi
-exec /usr/sbin/httpd "$@"
-EOF
-
-RUN cp /usr/sbin/apachectl /usr/sbin/apache2ctl && chmod 0755 /usr/sbin/apachectl /usr/sbin/apache2ctl
-
 # Provide Debian-like Apache helper commands used by Koha scripts.
-RUN cat >/usr/local/bin/a2ensite <<'EOF'
-#!/bin/sh
-set -e
-site="$1"
-[ -n "$site" ] || exit 0
-mkdir -p /etc/apache2/sites-enabled
-ln -sf "/etc/apache2/sites-available/$site" "/etc/apache2/sites-enabled/$site"
-EOF
-
-RUN cat >/usr/local/bin/a2dissite <<'EOF'
-#!/bin/sh
-set -e
-site="$1"
-[ -n "$site" ] || exit 0
-rm -f "/etc/apache2/sites-enabled/$site"
-EOF
-
-RUN cat >/usr/local/bin/a2enmod <<'EOF'
-#!/bin/sh
-exit 0
-EOF
-
-RUN cat >/usr/local/bin/a2dismod <<'EOF'
-#!/bin/sh
-exit 0
-EOF
-
-RUN chmod 0755 /usr/local/bin/a2ensite /usr/local/bin/a2dissite /usr/local/bin/a2enmod /usr/local/bin/a2dismod
-
 RUN if [ -f /etc/apache2/httpd.conf ]; then \
         grep -Fqx 'IncludeOptional /etc/apache2/sites-enabled/*.conf' /etc/apache2/httpd.conf \
             || echo 'IncludeOptional /etc/apache2/sites-enabled/*.conf' >> /etc/apache2/httpd.conf; \
@@ -281,29 +236,6 @@ RUN if [ -f /etc/apache2/httpd.conf ]; then \
         sed -i 's/^#LoadModule cgi_module modules\/mod_cgi.so/LoadModule cgi_module modules\/mod_cgi.so/' /etc/apache2/httpd.conf; \
         sed -i 's/^#LoadModule cgid_module modules\/mod_cgid.so/LoadModule cgid_module modules\/mod_cgid.so/' /etc/apache2/httpd.conf; \
     fi
-
-# Debian helper compatibility for koha-common scripts.
-RUN cat >/usr/local/bin/daemon <<'EOF'
-#!/bin/sh
-# Minimal compatibility shim for Debian's daemon utility used by koha scripts.
-while [ "$#" -gt 0 ]; do
-    case "$1" in
-        --)
-            shift
-            break
-            ;;
-        *)
-            shift
-            ;;
-    esac
-done
-
-[ "$#" -gt 0 ] || exit 0
-"$@" &
-exit 0
-EOF
-
-RUN chmod 0755 /usr/local/bin/daemon
 
 RUN mkdir -p /lib/lsb
 RUN cat >/lib/lsb/init-functions <<'EOF'
@@ -318,109 +250,30 @@ EOF
 
 RUN chmod 0755 /lib/lsb/init-functions
 
-# OpenRC service calls from Debian scripts are not reliable inside this container.
-RUN cat >/usr/local/bin/rc-service <<'EOF'
-#!/bin/sh
-service_name="$1"
-service_action="$2"
+# Phase 5: Replace the crude /etc/init.d/apache2 shim with a proper OpenRC script,
+# and add OpenRC service scripts for koha-plack and koha-worker.
+COPY files-alpine/openrc/apache2      /etc/init.d/apache2
+COPY files-alpine/openrc/koha-plack   /etc/init.d/koha-plack
+COPY files-alpine/openrc/koha-worker  /etc/init.d/koha-worker
+RUN chmod 0755 /etc/init.d/apache2 /etc/init.d/koha-plack /etc/init.d/koha-worker \
+    && sed -i 's/\r$//' /etc/init.d/apache2 /etc/init.d/koha-plack /etc/init.d/koha-worker
 
-case "$service_name" in
-    apache2)
-        case "$service_action" in
-            restart|reload|graceful)
-                exec /usr/sbin/httpd -k graceful
-                ;;
-            start)
-                exec /usr/sbin/httpd -k start
-                ;;
-            stop)
-                exec /usr/sbin/httpd -k stop
-                ;;
-            status)
-                if pgrep -x httpd >/dev/null 2>&1; then
-                    exit 0
-                fi
-                exit 3
-                ;;
-            *)
-                exit 0
-                ;;
-        esac
-        ;;
-    koha-common)
-        echo "[rc-service shim] ${service_name} ${service_action} (compat-no-op)"
-        exit 0
-        ;;
-esac
-
-exec /sbin/rc-service "$@"
-EOF
-
-RUN chmod 0755 /usr/local/bin/rc-service
-
-RUN cat >/usr/local/bin/service <<'EOF'
-#!/bin/sh
-service_name="$1"
-service_action="$2"
-
-case "$service_name" in
-    apache2)
-        case "$service_action" in
-            restart|reload|graceful)
-                exec /usr/sbin/httpd -k graceful
-                ;;
-            start)
-                exec /usr/sbin/httpd -k start
-                ;;
-            stop)
-                exec /usr/sbin/httpd -k stop
-                ;;
-            status)
-                if pgrep -x httpd >/dev/null 2>&1; then
-                    exit 0
-                fi
-                exit 3
-                ;;
-            *)
-                exit 0
-                ;;
-        esac
-        ;;
-    koha-common)
-        echo "[service shim] ${service_name} ${service_action} (compat-no-op)"
-        exit 0
-        ;;
-esac
-
-exec /usr/sbin/service "$@"
-EOF
-
-RUN chmod 0755 /usr/local/bin/service
-
-RUN cat >/etc/init.d/apache2 <<'EOF'
-#!/bin/sh
-action="$1"
-case "$action" in
-    restart|reload|graceful)
-        exec /usr/sbin/httpd -k graceful
-        ;;
-    start)
-        exec /usr/sbin/httpd -k start
-        ;;
-    stop)
-        exec /usr/sbin/httpd -k stop
-        ;;
-    status)
-        if pgrep -x httpd >/dev/null 2>&1; then
-            exit 0
-        fi
-        exit 3
-        ;;
-esac
-exit 0
-EOF
-
-RUN chmod 0755 /etc/init.d/apache2
+# Phase 5: Alpine periodic cron scripts for Koha scheduled maintenance.
+# BusyBox crond reads /etc/crontabs/root which calls run-parts /etc/periodic/*.
+RUN mkdir -p /etc/periodic/hourly /etc/periodic/daily /etc/periodic/weekly /etc/periodic/monthly \
+    && if ! grep -q 'run-parts' /etc/crontabs/root 2>/dev/null; then \
+         printf '# run-parts\n*/15 * * * *\trun-parts /etc/periodic/15min\n0 * * * *\trun-parts /etc/periodic/hourly\n0 2 * * *\trun-parts /etc/periodic/daily\n0 3 * * 0\trun-parts /etc/periodic/weekly\n0 4 1 * *\trun-parts /etc/periodic/monthly\n' \
+             >> /etc/crontabs/root; \
+       fi
+COPY files-alpine/cron/koha-hourly   /etc/periodic/hourly/koha-hourly
+COPY files-alpine/cron/koha-daily    /etc/periodic/daily/koha-daily
+COPY files-alpine/cron/koha-monthly  /etc/periodic/monthly/koha-monthly
+RUN chmod 0755 /etc/periodic/hourly/koha-hourly \
+               /etc/periodic/daily/koha-daily \
+               /etc/periodic/monthly/koha-monthly \
+    && sed -i 's/\r$//' /etc/periodic/hourly/koha-hourly \
+                        /etc/periodic/daily/koha-daily \
+                        /etc/periodic/monthly/koha-monthly
 
 RUN mkdir -p /kohadevbox
 WORKDIR /kohadevbox
