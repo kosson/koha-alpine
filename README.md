@@ -159,8 +159,8 @@ First step, build the Koha image running the command:
 # Build the prod image from a released Koha tag (~10-15 min, fetches source from git)
 ./stack-alpine.sh build \
   --image-mode prod \
-  --koha-version 25.11.01-2 \
-  --koha-ref 25.11.01-2 \
+  --koha-version 25.11.06-1 \
+  --koha-ref 25.11.06-1 \
   --build-koha
 ```
 
@@ -177,8 +177,8 @@ Now, you are ready to start the Koha application by bringing up to life all the 
 # Start the full managed stack in prod mode with the same version and ref
 ./stack-alpine.sh start \
   --image-mode prod \
-  --koha-version 25.11.01-2 \
-  --koha-ref v25.11.01-2
+  --koha-version 25.11.06-1 \
+  --koha-ref v25.11.06-1
 ```
 
 The version mentioned as value for `--koha-ref` must be an existing git tag. To find the latest available tag run:
@@ -337,7 +337,7 @@ docker compose -f docker-compose-alpinekoha.yml build
 ./stack-alpine.sh tls-client-cert
 
 # 5. Start via stack manager (recommended)
-./stack-alpine.sh startv26.05.01-1
+./stack-alpine.sh startv25.11.06-1
 ```
 
 Important:
@@ -444,7 +444,7 @@ Alpine-specific startup profile:
 
 ```bash
 # Fast resume path for existing DB (default)
-./stack-alpine.sh start --bootstrap-profile resume --no-fresh-dbv26.05.01-1
+./stack-alpine.sh start --bootstrap-profile resume --no-fresh-dbv25.11.06-1
 
 # Force full population/reindex path on existing DB
 ./stack-alpine.sh start --bootstrap-profile full --no-fresh-db
@@ -859,8 +859,8 @@ Use this for immutable, version-pinned runtime builds. Always use a released git
 # Build a stable released prod image — --koha-ref is the git tag for that release:
 ./stack-alpine.sh build \
   --image-mode prod \
-  --koha-version 25.11.01-2 \
-  --koha-ref v25.11.01-2 \
+  --koha-version 25.11.06-1 \
+  --koha-ref v25.11.06-1 \
   --build-koha
 
 # Start the stack in prod mode with the same version and ref:
@@ -892,9 +892,9 @@ If you need manual compose control for production mode:
 
 ```bash
 # Released version:
-KOHA_RELEASE_VERSION=25.11.01-2 \
-KOHA_RELEASE_REF=v25.11.01-2 \
-KOHA_ALPINE_PROD_IMAGE_TAG=kosson/koha-alpine-prod:25.11.01-2 \
+KOHA_RELEASE_VERSION=25.11.06-1 \
+KOHA_RELEASE_REF=v25.11.06-1 \
+KOHA_ALPINE_PROD_IMAGE_TAG=kosson/koha-alpine-prod:25.11.06-1 \
 docker compose \
   -f docker-compose-alpinekoha.yml \
   -f docker-compose.prod.yml \
@@ -1507,18 +1507,18 @@ Substitute `<VERSION>` and `<TAG>` with the target Koha release (e.g. `26.05.01-
 # 1. Build a fixed-version production image using the released git tag
 ./stack-alpine.sh build \
   --image-mode prod \
-  --koha-version 26.05.01-1 \
-  --koha-ref v26.05.01-1 \
+  --koha-version 25.11.06-1 \
+  --koha-ref v25.11.06-1 \
   --build-koha
 
 # 2. (Optional) Push the resulting image tag to a registry
-docker push kosson/koha-alpine-prod:26.05.01-1
+docker push kosson/koha-alpine-prod:25.11.06-1
 
 # 3. Start the stack in production mode with the exact same version and ref
 ./stack-alpine.sh start \
   --image-mode prod \
-  --koha-version 26.05.01-1 \
-  --koha-ref v26.05.01-1
+  --koha-version 25.11.06-1 \
+  --koha-ref v25.11.06-1
 
 # 4. Verify services and endpoints
 ./stack-alpine.sh status
@@ -1531,9 +1531,9 @@ curl http://localhost:8081/
 If you need to deploy without the stack wrapper:
 
 ```bash
-KOHA_RELEASE_VERSION=26.05.01-1 \
-KOHA_RELEASE_REF=v26.05.01-1 \
-KOHA_ALPINE_PROD_IMAGE_TAG=kosson/koha-alpine-prod:26.05.01-1 \
+KOHA_RELEASE_VERSION=25.11.06-1 \
+KOHA_RELEASE_REF=v25.11.06-1 \
+KOHA_ALPINE_PROD_IMAGE_TAG=kosson/koha-alpine-prod:25.11.06-1 \
 docker compose \
   -f docker-compose-alpinekoha.yml \
   -f docker-compose.prod.yml \
@@ -1548,8 +1548,8 @@ To roll back, restart in prod mode with the previous known-good version and tag:
 ```bash
 ./stack-alpine.sh start \
   --image-mode prod \
-  --koha-version 26.05.00 \
-  --koha-ref v26.05.00
+  --koha-version 25.11.06 \
+  --koha-ref v25.11.06
 ```
 
 Replace those values with whichever earlier version/ref pair was last confirmed good.
@@ -1583,7 +1583,7 @@ See `traefik/README.md` for reverse proxy setup.
 - **RabbitMQ:** 3-management
 - **Node.js:** Latest stable (Alpine apk)
 - **Perl:** 5.x (Alpine apk)
-- **Last Updated:** 2026-07-23
+- **Last Updated:** 2026-08-03
 
 ---
 
