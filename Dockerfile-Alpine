@@ -116,91 +116,120 @@ RUN wget https://ftp.indexdata.com/pub/yaz/yaz-${YAZ_VERSION}.tar.gz -O /tmp/yaz
 
 RUN npm install -g yarn gulp-cli
 
-RUN cpanm --notest Modern::Perl
+RUN cpanm --notest Modern::Perl \
+    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
 
 # CGI::Session md5 ID generation requires Crypt::SysRandom at runtime.
-RUN cpanm --notest Crypt::SysRandom
+RUN cpanm --notest Crypt::SysRandom \
+    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
 
 # Alpine 3.24 lacks a packaged Locale::PO required by Koha translator tooling.
-RUN cpanm --notest Locale::PO
+RUN cpanm --notest Locale::PO \
+    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
 
 # Alpine 3.24 lacks a packaged Struct::Diff; install from CPAN for Koha logging.
-RUN cpanm --notest Struct::Diff
+RUN cpanm --notest Struct::Diff \
+    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
 
 # Alpine 3.24 lacks a packaged DateTime::Format::MySQL.
-RUN cpanm --notest DateTime::Format::MySQL
+RUN cpanm --notest DateTime::Format::MySQL \
+    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
 
 # Alpine 3.24 lacks a packaged Locale::Currency::Format.
-RUN cpanm --notest Locale::Currency::Format
+RUN cpanm --notest Locale::Currency::Format \
+    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
 
 # Alpine 3.24 lacks a packaged Array::Utils.
-RUN cpanm --notest Array::Utils
+RUN cpanm --notest Array::Utils \
+    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
 
 # Alpine 3.24 lacks a packaged MARC::Record.
-RUN cpanm --notest MARC::Record
+RUN cpanm --notest MARC::Record \
+    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
 
 # Alpine 3.24 lacks a packaged MARC::Record::MiJ.
-RUN cpanm --notest MARC::Record::MiJ
+RUN cpanm --notest MARC::Record::MiJ \
+    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
 
 # Alpine 3.24 lacks a packaged MARC::File::XML.
-RUN cpanm --notest MARC::File::XML
+RUN cpanm --notest MARC::File::XML \
+    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
 
 # Alpine 3.24 lacks a packaged GD::Barcode.
-RUN cpanm --notest GD::Barcode
+RUN cpanm --notest GD::Barcode \
+    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
 
 # Alpine 3.24 lacks a packaged Auth::GoogleAuth.
-RUN cpanm --notest Auth::GoogleAuth
+RUN cpanm --notest Auth::GoogleAuth \
+    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
 
 # Alpine 3.24 lacks a packaged Number::Format.
-RUN cpanm --notest Number::Format
+RUN cpanm --notest Number::Format \
+    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
 
 # Alpine 3.24 lacks a packaged Algorithm::Munkres.
-RUN cpanm --notest Algorithm::Munkres
+RUN cpanm --notest Algorithm::Munkres \
+    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
 
 # Alpine 3.24 lacks a packaged Net::Stomp.
-RUN cpanm --notest Net::Stomp
+RUN cpanm --notest Net::Stomp \
+    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
 
 # Alpine 3.24 lacks a packaged Mojolicious::Plugin::OAuth2.
-RUN cpanm --notest Mojolicious::Plugin::OAuth2
+RUN cpanm --notest Mojolicious::Plugin::OAuth2 \
+    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
 
 # Alpine 3.24 lacks a packaged JSON::Validator.
-RUN cpanm --notest JSON::Validator
+RUN cpanm --notest JSON::Validator \
+    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
 
 # Alpine 3.24 lacks a packaged Text::Iconv.
-RUN cpanm --notest Text::Iconv
+RUN cpanm --notest Text::Iconv \
+    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
 
 # Alpine 3.24 lacks a packaged Algorithm::CheckDigits.
-RUN cpanm --notest Algorithm::CheckDigits
+RUN cpanm --notest Algorithm::CheckDigits \
+    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
 
 # Alpine package set does not provide Locale::Messages for this image.
-RUN cpanm --notest Locale::Messages
+RUN cpanm --notest Locale::Messages \
+    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
 
 # Alpine 3.24 lacks a packaged DBIx::RunSQL.
-RUN cpanm --notest DBIx::RunSQL
+RUN cpanm --notest DBIx::RunSQL \
+    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
 
 # Alpine 3.24 lacks a packaged WWW::CSRF.
-RUN cpanm --notest WWW::CSRF
+RUN cpanm --notest WWW::CSRF \
+    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
 
 # Alpine 3.24 lacks a packaged Mojo::JWT.
-RUN cpanm --notest Mojo::JWT
+RUN cpanm --notest Mojo::JWT \
+    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
 
 # Alpine 3.24 lacks packaged Email::Stuffer.
-RUN cpanm --notest Email::Stuffer
+RUN cpanm --notest Email::Stuffer \
+    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
 
 # Alpine 3.24 lacks packaged Lingua::Stem.
-RUN cpanm --notest Lingua::Stem
+RUN cpanm --notest Lingua::Stem \
+    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
 
 # Alpine 3.24 lacks packaged Lingua::Stem::Snowball.
-RUN cpanm --notest Lingua::Stem::Snowball
+RUN cpanm --notest Lingua::Stem::Snowball \
+    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
 
 # Alpine 3.24 lacks a packaged Search::Elasticsearch.
-RUN cpanm --notest Search::Elasticsearch
+RUN cpanm --notest Search::Elasticsearch \
+    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
 
 # Alpine 3.24 lacks a packaged DBIx::Class.
-RUN cpanm --notest DBIx::Class
+RUN cpanm --notest DBIx::Class \
+    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
 
 # Native compilation of Z39.50/SRU Perl module against compiled YAZ library
-RUN cpanm --notest Net::Z3950::ZOOM
+RUN cpanm --notest Net::Z3950::ZOOM \
+    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
 
 # Debian-era Koha staging scripts expect these filesystem targets to exist.
 RUN mkdir -p \
@@ -237,6 +266,7 @@ RUN if [ -f /etc/apache2/httpd.conf ]; then \
         sed -i 's/^#LoadModule cgid_module modules\/mod_cgid.so/LoadModule cgid_module modules\/mod_cgid.so/' /etc/apache2/httpd.conf; \
     fi
 
+# FIXME: The following should be adapted to . /lib/rc/sh/functions.sh and not mimic Debian's /lib/lsb/init-functions.  The current shim is a crude workaround to allow the Koha scripts to run without error.
 RUN mkdir -p /lib/lsb
 RUN cat >/lib/lsb/init-functions <<'EOF'
 #!/bin/sh
@@ -344,12 +374,17 @@ RUN rm -rf /kohadevbox/koha \
     && git -C /kohadevbox/koha fetch --depth "${KOHA_GIT_DEPTH}" origin "${KOHA_GIT_REF}" \
     && git -C /kohadevbox/koha checkout --detach FETCH_HEAD
 
-# Pre-install JS dependencies at build time to reduce runtime startup cost.
+# Pre-install JS dependencies and stage runtime assets, then clean build caches.
 RUN cd /kohadevbox/koha \
-    && yarn install --frozen-lockfile
-
-# Perform build-time asset staging for immutable production image
-RUN /usr/local/bin/build-alpine-package.sh /kohadevbox/koha
+    && CYPRESS_INSTALL_BINARY=0 yarn install --frozen-lockfile \
+    && /usr/local/bin/build-alpine-package.sh /kohadevbox/koha \
+    && rm -rf /kohadevbox/koha/node_modules \
+    && rm -rf /kohadevbox/koha/.git \
+    && rm -rf /usr/local/share/.cache/yarn \
+    && rm -rf /root/.cache \
+    && rm -rf /root/.npm \
+    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources \
+    && find /tmp -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 
 # Re-apply Alpine overrides after Debian script staging in production image.
 RUN install -m 0755 /kohadevbox/files-alpine/scripts/koha-create /usr/sbin/koha-create \

@@ -207,6 +207,11 @@ configure_koha_mode() {
       KOHA_RELEASE_VERSION="${KOHA_RELEASE_REF#v}"
     fi
 
+    # Accept release refs with or without leading "v" (e.g. 25.11.06-1 -> v25.11.06-1).
+    if [[ "${KOHA_RELEASE_REF}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9]+)?$ ]]; then
+      KOHA_RELEASE_REF="v${KOHA_RELEASE_REF}"
+    fi
+
     [[ -n "${KOHA_RELEASE_VERSION}" ]] || die "KOHA_RELEASE_VERSION is required in prod mode"
     [[ -n "${KOHA_RELEASE_REF}" ]] || die "KOHA_RELEASE_REF is required in prod mode"
 

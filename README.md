@@ -160,7 +160,7 @@ First step, build the Koha image running the command:
 ./stack-alpine.sh build \
   --image-mode prod \
   --koha-version 25.11.06-1 \
-  --koha-ref 25.11.06-1 \
+  --koha-ref v25.11.06-1 \
   --build-koha
 ```
 
@@ -337,7 +337,7 @@ docker compose -f docker-compose-alpinekoha.yml build
 ./stack-alpine.sh tls-client-cert
 
 # 5. Start via stack manager (recommended)
-./stack-alpine.sh startv25.11.06-1
+./stack-alpine.sh start
 ```
 
 Important:
