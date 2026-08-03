@@ -4,7 +4,7 @@ A modern, lightweight Koha library management system runtime on Alpine Linux 3.2
 This setting and arrangements are originated in KTD Koha - https://gitlab.com/koha-community/koha-testing-docker.
 
 This setup enables development and testing contexts. Also, it promotes OpenSearch integration for indexing purposes.
-The main reason for developing this alternative is resource based, and production oriented. Its sister repo https://github.com/kosson/koha-docker still uses Debian/Ubuntu, but the space used for the image is rather big. Also Debian/Ubuntu operating systems are very well endowed with all it needs for development.
+The main reason for developing this alternative is resource based, and production oriented. Its sister repo https://github.com/kosson/koha-alpine still uses Debian/Ubuntu, but the space used for the image is rather big. Also Debian/Ubuntu operating systems are very well endowed with all it needs for development.
 
 The resulting Koha container is using the components it depends on as separate services. These are MariaDB (the database), RabbitMQ (the message queue messenger), Memcached (caching manager). OpenSearch version 3.6 is used for indexing, the cluster being provided as a separate service added to those who are raised all together using the `docker-compose-alpinekoha` orchestrator file.
 
@@ -57,17 +57,37 @@ You have two valid startup modes:
 Run from repository root:
 
 ```bash
-cd /path/to/KOHA-DOCKER-SOLUTIONS/koha-docker
+cd /path/to/your/koha-alpine
+```
 
+Create the networks needed.
+
+```bash
 # Required docker networks (safe if they already exist)
 docker network create opensearch-36_osearch || true
 docker network create knonikl || true
 docker network create frontend || true
+```
 
+Create the `.env` file that contains all the environment variables needed to begin the project.
+
+```bash
 # Create your local env file for Koha usage
 cp env/template.env env/.env
+```
+
+Create the `.env` file in the OpenSearch-3.6 subfolder that is needed to start OpenSearch cluster. Observe that the `.env` file you've just created by copying the template has in the end the following two lines similar to the:
+
+```ini
+OS_COMPLIANCE_SALT=ZLqnAIFnRMj2wTFw
+OS_QUERY_MASTERKEY=0217e69bff29bc67dc12c16d84904a85
+```
+
+Those will be overwritten soon enough.
+
+```bash
 # Create OpenSearch env file for OpenSearch usage
-cp OpenSearch-3.6/template.env .env
+cp OpenSearch-3.6/template.env OpenSearch-3.6/.env
 ```
 
 Now edit `env/.env` and set at minimum:
@@ -85,29 +105,28 @@ Initially it comes with a dummy password that match. Be very careful at this ste
 
 #### Step 3: OpenSearch first-run bootstrap (only if full mode)
 
-Remember to copy template.env to .env: `cp OpenSearch-3.6/template.env OpenSearch-3.6/.env` prior to the following operations. Observe that the `.env` file you've just created by copying the template has in the end the following two lines similar to the:
-
-```ini
-OS_COMPLIANCE_SALT=ZLqnAIFnRMj2wTFw
-OS_QUERY_MASTERKEY=0217e69bff29bc67dc12c16d84904a85
-```
-
-Those will be overwritten soon enough.
+Remember to copy `template.env` to `.env` in the OpenSearch-3.6 subfolder: `cp OpenSearch-3.6/template.env OpenSearch-3.6/.env` prior to the following operations. We move with the pulling of the OpenSearch official image and the creation of the credentials needed to operate the OpenSearch cluster (credentials needed for authorized communication among the nodes).
+First, pull the OpenSearch image:
 
 ```bash
 docker pull opensearchproject/opensearch:3.6.0
-cd OpenSearch-3.6
-
-# Ensure OpenSearch cert set is created correctly
-./opensearch_local_certificates_creator.sh
-
-# First-time cluster bring-up rehearsal
-./raise-from-ground-up.sh
-
-cd ..
 ```
 
-If the cluster is raised and green (message in Terminal: `[raise-from-ground-up] Cluster status=yellow, nodes=5`), bring it down before the next step `docker compose down -v --remove-orphans`. It will be brought back soon enough by another script in the next step. Remember to go up a level: `cd ..`
+Then, make sure you are in the OpenSearch-3.6 subdirectory: `cd OpenSearch-3.6`. Here, you need to create the certificates needed for authorization and authentication.
+
+```bash
+# Ensure OpenSearch cert set is created correctly
+./opensearch_local_certificates_creator.sh
+```
+
+If all goes well, start the cluster for the first time to ensure a green light.
+
+```bash
+# First-time cluster bring-up rehearsal
+./raise-from-ground-up.sh
+```
+
+If the cluster is raised and green (message in Terminal: `[raise-from-ground-up] Cluster status=yellow, nodes=5`), bring it down before the next step `docker compose down -v --remove-orphans`. It will be brought back soon enough by another script in the next step. Remember to go up a level to the root directory if the project: `cd ..`.
 
 #### Step 4: Build and start Koha stack
 
@@ -132,27 +151,37 @@ Use this when you are actively editing Koha code. The `./koha` directory from yo
 
 **Mode B — Production (Koha source baked into the image at a fixed released version)**
 
-Use this when you want an immutable, version-pinned runtime that does not depend on a local source directory. The Koha source tree is fetched from the community git at build time using a released tag and stored inside the image.
+Use this when you want an immutable, version-pinned runtime that does not depend on a local source directory. The Koha source tree is fetched from the community git at build time using a released tag and stored inside the image. This will balloon the image to almost 4.48GB in size.
+
+First step, build the Koha image running the command:
 
 ```bash
 # Build the prod image from a released Koha tag (~10-15 min, fetches source from git)
 ./stack-alpine.sh build \
   --image-mode prod \
-  --koha-version 26.05.01-1 \
-  --koha-ref v26.05.01-1 \
+  --koha-version 25.11.01-2 \
+  --koha-ref 25.11.01-2 \
   --build-koha
+```
 
+Second, create the certificates MariaDB needs to communicate with Koha.
+
+```bash
 # Prepare MariaDB TLS client cert/key and auto-wire env/.env
 ./stack-alpine.sh tls-client-cert
+```
 
+Now, you are ready to start the Koha application by bringing up to life all the services running the command:
+
+```bash
 # Start the full managed stack in prod mode with the same version and ref
 ./stack-alpine.sh start \
   --image-mode prod \
-  --koha-version 26.05.01-1 \
-  --koha-ref v26.05.01-1
+  --koha-version 25.11.01-2 \
+  --koha-ref v25.11.01-2
 ```
 
-`--koha-ref` must be an existing git tag. To find the latest available tag:
+The version mentioned as value for `--koha-ref` must be an existing git tag. To find the latest available tag run:
 
 ```bash
 git ls-remote --tags https://git.koha-community.org/Koha-community/Koha.git | grep "refs/tags/v2" | sort -V | tail -10
@@ -262,7 +291,7 @@ docker exec -it <koha-container-name> bash
 koha-elasticsearch --rebuild -d -b -a <instance-name>
 ```
 
-Use your actual Koha container name and instance name. For this repository the instance is commonly `kohadev` for example `docker exec -it koha-docker-koha-1 bash` followed by `koha-elasticsearch --rebuild -d -b -a kohadev`.
+Use your actual Koha container name and instance name. For this repository the instance is commonly `kohadev` for example `docker exec -it koha-alpine-koha-1 bash` followed by `koha-elasticsearch --rebuild -d -b -a kohadev`.
 
 Keep these values aligned every time you rotate credentials:
 
@@ -286,12 +315,12 @@ Recommended check after you start all the services:
 bash tests/test_opensearch_os01_auth_integration.sh
 ```
 
-As a rule of thumb it is wise to start the OpenSearch cluster. If it forms well, continue with the next step.
+As a rule of thumb it is wise to start the OpenSearch cluster prior to anything. If it forms well, continue with the next step.
 
 ### Start the Stack in 5 Steps
 
 ```bash
-cd /path/to/KOHA-DOCKER-SOLUTIONS/koha-docker
+cd /path/to/your/koha-alpine
 
 # 1. Copy environment template (if first time)
 cp env/template.env env/.env
@@ -308,7 +337,7 @@ docker compose -f docker-compose-alpinekoha.yml build
 ./stack-alpine.sh tls-client-cert
 
 # 5. Start via stack manager (recommended)
-./stack-alpine.sh start
+./stack-alpine.sh startv26.05.01-1
 ```
 
 Important:
@@ -321,7 +350,7 @@ Important:
 ```bash
 # Wait 120-140 seconds for full bootstrap, then check:
 docker compose -f docker-compose-alpinekoha.yml logs --tail=80 koha
-
+v26.05.01-1
 # Should see: "koha-testing-docker has started up and is ready to be enjoyed!"
 
 # Optional: confirm Apache CGI is available before running tests
@@ -350,7 +379,7 @@ Use the staff interface at [http://localhost:8081](http://localhost:8081).
 | **Staff/Intranet** (admin) | http://localhost:8081 | 8081 | Library staff interface |
 | **Database** | localhost:3306 | 3306 | Internal only (SSL required) |
 | **RabbitMQ Management** | http://localhost:15672 | 15672 | STOMP: localhost:61613 |
-| **Memcached** | localhost:11211 | 11211 | Internal caching |
+| **Memcached** | localhost:11211 | 11211 | Internal caching |v26.05.01-1
 
 ### Stop the Stack
 
@@ -361,14 +390,13 @@ docker compose -f docker-compose-alpinekoha.yml down
 docker compose -f docker-compose-alpinekoha.yml stop
 ```
 
-## Using stack-alpine.sh
+## Using stack-alpine.sh script
 
 The `stack-alpine.sh` script is the Alpine-oriented orchestration wrapper for Koha + MariaDB + Memcached + RabbitMQ, with optional OpenSearch and Traefik lifecycle.
-
-Run all commands from the `koha-docker` directory:
+You MUST run all the commands from the `koha-alpine` directory:
 
 ```bash
-cd /path/to/KOHA-DOCKER-SOLUTIONS/koha-docker
+cd /path/to/your/koha-alpine
 ```
 
 Common commands:
@@ -416,7 +444,7 @@ Alpine-specific startup profile:
 
 ```bash
 # Fast resume path for existing DB (default)
-./stack-alpine.sh start --bootstrap-profile resume --no-fresh-db
+./stack-alpine.sh start --bootstrap-profile resume --no-fresh-dbv26.05.01-1
 
 # Force full population/reindex path on existing DB
 ./stack-alpine.sh start --bootstrap-profile full --no-fresh-db
@@ -435,8 +463,6 @@ For full options:
 ./stack-alpine.sh --help
 ```
 
----
-
 ## SSL Certificate Management
 
 ### Overview
@@ -450,6 +476,8 @@ The Koha Alpine container uses **SSL/TLS encryption for all MariaDB database con
 - **Client Certificate** (`client-cert.pem`, `client-key.pem`): Koha client certificate (used by Perl/DBI paths)
 - **Configuration** (`mariadb-ssl.cnf`): MySQL SSL configuration
 - **Extensions** (`server-ext.cnf`): Certificate subject alternative names
+
+You MUST regenerate them to avoid any security issues.
 
 ### Recommended helper workflow (stack-managed)
 
@@ -490,7 +518,7 @@ This avoids Koha source edits while keeping bootstrap and runtime DB connectivit
 
 ### Certificate Locations
 
-```
+```log
 files-alpine/mariadb-ssl/
 ├── ca-cert.pem              # Root CA public certificate
 ├── ca-key.pem               # Root CA private key (keep private!)
@@ -646,62 +674,6 @@ docker compose -f docker-compose-alpinekoha.yml build --no-cache
 docker compose -f docker-compose-alpinekoha.yml up -d
 ```
 
----
-
-## Project Structure
-
-```
-koha-docker/
-├── Dockerfile-Alpine              # Alpine 3.24.1 base image (60+ stages)
-├── docker-compose-alpinekoha.yml  # Service orchestration
-├── README-ALPINE.md               # This file
-│
-├── files-alpine/                  # Alpine-specific files (baked into image)
-│   ├── run.sh                     # Container entrypoint script
-│   ├── lib/
-│   │   ├── run-sh-alpine.sh       # Alpine service shims
-│   │   └── ...
-│   ├── templates/
-│   │   ├── defaults.env           # Default environment variables
-│   │   └── ...
-│   ├── git_hooks/                 # Git hooks for development
-│   ├── mariadb-ssl/               # ← SSL certificates (NEW LOCATION)
-│   │   ├── ca-cert.pem
-│   │   ├── ca-key.pem
-│   │   ├── server-cert.pem
-│   │   ├── server-key.pem
-│   │   ├── server-ext.cnf
-│   │   ├── ca-cert.srl
-│   │   └── mariadb-ssl.cnf
-│   └── ...
-│
-├── files/                         # Generic files (not Alpine-specific)
-│   ├── run.sh                     # Original Debian-based script
-│   ├── git_hooks/
-│   └── templates/
-│
-├── env/
-│   ├── defaults.env               # Global defaults
-│   ├── template.env               # User config template
-│   └── .env                       # User config (gitignored)
-│
-├── koha/                          # Koha repository (mounted at runtime)
-│   ├── Koha/                      # Perl modules
-│   ├── koha-tmpl/                 # Templates
-│   ├── api/                       # REST API
-│   ├── C4/                        # Core modules
-│   └── ...
-│
-├── OpenSearch-3.6/                # Search engine (optional)
-├── traefik/                       # Reverse proxy (optional)
-├── tests/                         # Test scripts
-├── patches/                       # Koha patches
-└── docs/                          # Documentation
-    └── Alpine-migration/          # Alpine migration notes
-```
-
----
-
 ## Environment Configuration
 
 ### Initial Setup
@@ -723,7 +695,7 @@ Mandatory first-start edits:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `SYNC_REPO` | `/mnt/beckie2/DEVELOPMENT/koha-docker/koha` | Path to Koha source code (mounted into container) |
+| `SYNC_REPO` | `/mnt/beckie2/DEVELOPMENT/koha-alpine/koha` | Path to Koha source code (mounted into container) |
 | `KOHA_INSTANCE` | `kohadev` | Library instance name |
 | `KOHA_DB_PASSWORD` | `password` | Database password (change in production!) |
 | `KOHA_DB_ROOT_PASSWORD` | `password` | Database root password |
@@ -737,7 +709,7 @@ Mandatory first-start edits:
 
 ### Advanced Variables
 
-```bash
+```yaml
 # Search/indexing
 KOHA_ELASTICSEARCH=no              # Set to 'yes' for full-text search
 ELASTIC_SERVER=es:9200             # Elasticsearch endpoint
@@ -762,11 +734,7 @@ EXTRA_CPAN=                         # Comma-separated module list
 EXTRA_APT=                          # Additional Alpine packages
 ```
 
----
-
-## Starting the Project
-
-### Full Bootstrap Sequence
+## Starting the Project in a full Bootstrap Sequence
 
 The container runs these phases automatically:
 
@@ -785,9 +753,7 @@ The container runs these phases automatically:
 
 `patches/*.patch` are optional source patches, controlled by `APPLY_KOHA_PATCHES`.
 
-They are not the cause of the current endpoint 500 behavior seen after startup. The observed failures come from database TLS/SSL negotiation during Koha DB connections, not from the two local code patches.
-
-Use this quick diagnostic to confirm:
+Rarely there is endpoint 500 errors occurs after startup. The observed failures come from database TLS/SSL negotiation during Koha DB connections, not from the two local code patches. Use this quick diagnostic to confirm:
 
 ```bash
 docker compose -f docker-compose-alpinekoha.yml exec -T koha \
@@ -802,7 +768,7 @@ SYNC_REPO=/path/to/custom/koha \
 KOHA_INSTANCE=mylib \
 docker compose -f docker-compose-alpinekoha.yml up -d
 
-# Or use .env file
+# Or use .env file - modify SYNC_REPO with your path
 cat > env/.env << EOF
 SYNC_REPO=/path/to/custom/koha
 KOHA_INSTANCE=mylib
@@ -851,8 +817,6 @@ docker compose -f docker-compose-alpinekoha.yml logs --tail=50 koha
 docker compose -f docker-compose-alpinekoha.yml logs koha | grep "\[alpine\]"
 ```
 
----
-
 ## Dual Image Modes (Development vs Production)
 
 This project now supports two explicit image/run contexts from the same codebase.
@@ -895,8 +859,8 @@ Use this for immutable, version-pinned runtime builds. Always use a released git
 # Build a stable released prod image — --koha-ref is the git tag for that release:
 ./stack-alpine.sh build \
   --image-mode prod \
-  --koha-version 26.05.01-1 \
-  --koha-ref v26.05.01-1 \
+  --koha-version 25.11.01-2 \
+  --koha-ref v25.11.01-2 \
   --build-koha
 
 # Start the stack in prod mode with the same version and ref:
@@ -910,7 +874,7 @@ What these flags control:
 
 1. `--image-mode prod` enables `docker-compose.prod.yml` override.
 2. `--koha-version` sets the release label (used for image tag and compose project naming).
-3. `--koha-ref` pins the Koha Git ref baked into the image. Always use the git tag for the release (e.g. `v26.05.01-1`). Available tags can be verified with `git ls-remote --tags https://git.koha-community.org/Koha-community/Koha.git`.
+3. `--koha-ref` pins the Koha Git ref baked into the image. Always use the git tag for the release (e.g. `v25.11.01-2`). Available tags can be verified with `git ls-remote --tags https://git.koha-community.org/Koha-community/Koha.git`.
 
 > **Pre-release / development builds only:** if no stable tag exists yet for the target version (e.g. 26.11 before November 2026), pass `--koha-ref main` to build from the development branch. Do not use this in production.
 >
@@ -928,9 +892,9 @@ If you need manual compose control for production mode:
 
 ```bash
 # Released version:
-KOHA_RELEASE_VERSION=26.05.01-1 \
-KOHA_RELEASE_REF=v26.05.01-1 \
-KOHA_ALPINE_PROD_IMAGE_TAG=kosson/koha-alpine-prod:26.05.01-1 \
+KOHA_RELEASE_VERSION=25.11.01-2 \
+KOHA_RELEASE_REF=v25.11.01-2 \
+KOHA_ALPINE_PROD_IMAGE_TAG=kosson/koha-alpine-prod:25.11.01-2 \
 docker compose \
   -f docker-compose-alpinekoha.yml \
   -f docker-compose.prod.yml \
@@ -957,7 +921,6 @@ docker compose \
    - `http://localhost:8080` (OPAC)
    - `http://localhost:8081` (Staff)
 
----
 
 ## Operating the System
 
@@ -1053,7 +1016,7 @@ Notes:
 Use this sequence to reproduce a clean Alpine image rebuild and full verification on another machine:
 
 ```bash
-cd /path/to/KOHA-DOCKER-SOLUTIONS/koha-docker
+cd /path/to/your/koha-alpine
 
 # 1) Stop Alpine services
 docker compose -f docker-compose-alpinekoha.yml down --remove-orphans
@@ -1089,7 +1052,7 @@ docker compose -f docker-compose-alpinekoha.yml exec koha \
 
 ```bash
 # With live code mounting (via SYNC_REPO)
-# Simply edit files in: /mnt/beckie2/DEVELOPMENT/koha-docker/koha/
+# Simply edit files in: /mnt/beckie2/DEVELOPMENT/koha-alpine/koha/
 
 # Changes are visible immediately (development mode)
 # For production, rebuild image to bake in changes
@@ -1125,13 +1088,11 @@ docker compose -f docker-compose-alpinekoha.yml exec koha \
   -e "Koha::Script::SetPassword->new( { koha_instance => 'kohadev', password => 'newpassword' } )"
 ```
 
----
-
 ## Architecture
 
 ### Container Stack
 
-```
+```log
 ┌─────────────────────────────────────────────────────────────┐
 │  Docker Host (Linux)                                        │
 ├─────────────────────────────────────────────────────────────┤
@@ -1164,7 +1125,7 @@ docker compose -f docker-compose-alpinekoha.yml exec koha \
 │  │ :3306 (SSL ✓)   │  │ :61613 (STOMP)    │  │ :11211     │ │
 │  │                 │  │ :15672 (mgmt)     │  │            │ │
 │  │ koha_kohadev    │  │                   │  │ Cache      │ │
-│  │ koha_kohadev_* │  │ koha_kohadev queue │  │ Sessions   │ │
+│  │ koha_kohadev_*  │  │ koha_kohadev queue│  │ Sessions   │ │
 │  │                 │  │                   │  │            │ │
 │  └─────────────────┘  └───────────────────┘  └────────────┘ │
 │         │                       │                    │      │
@@ -1190,7 +1151,7 @@ docker compose -f docker-compose-alpinekoha.yml exec koha \
 
 ### SSL/TLS Flow
 
-```
+```log
 Client Request
     ↓
 [HTTP :8080 (OPAC) or :8081 (Staff)]
@@ -1207,8 +1168,6 @@ MariaDB Database
     └─ Connection encrypted: server-key.pem ✓
 ```
 
----
-
 ## Troubleshooting
 
 ### Bootstrap Issues
@@ -1216,7 +1175,6 @@ MariaDB Database
 #### "Compilation failed" or "Can't locate Module"
 
 **Cause:** Missing Perl module
-
 **Solution:**
 
 ```bash
@@ -1238,7 +1196,6 @@ docker compose -f docker-compose-alpinekoha.yml up -d
 #### "Port already in use"
 
 **Cause:** Service running on 8080/8081
-
 **Solution:**
 
 ```bash
@@ -1254,7 +1211,6 @@ KOHA_OPAC_PORT=9080 KOHA_INTRANET_PORT=9081 \
 #### "Database connection failed"
 
 **Cause:** MariaDB SSL certificate mismatch or not ready
-
 **Solution:**
 
 ```bash
@@ -1352,7 +1308,7 @@ Common 500 signatures and fixes:
 **Check resource usage:**
 
 ```bash
-docker stats koha-docker-koha-1
+docker stats koha-alpine-koha-1
 
 # Increase container resources
 # Edit docker-compose-alpinekoha.yml:
@@ -1443,15 +1399,13 @@ Related tracker entry:
 
 - `docs/TRACKER/2026-07-24 — Alpine OPAC 500 remediation, ZOOM shim hardening, and test-suite stabilization.md`
 
----
-
 ## Development Workflow
 
 ### Setting Up Development Environment
 
 ```bash
 # 1. Clone/checkout Koha repository
-cd /mnt/beckie2/DEVELOPMENT/koha-docker
+cd /path/to/your/koha-alpine
 git clone https://github.com/Koha-Community/Koha.git koha
 cd koha && git checkout -b develop origin/develop
 
@@ -1474,7 +1428,7 @@ docker compose -f docker-compose-alpinekoha.yml logs -f koha
 
 ```bash
 # Edit Koha files locally
-nano /mnt/beckie2/DEVELOPMENT/koha-docker/koha/C4/SomeModule.pm
+nano /path/to/your/koha-alpine/koha/C4/SomeModule.pm
 
 # Changes are visible in container at /kohadevbox/koha/C4/SomeModule.pm
 # Perl scripts reload on next request (no restart needed)
@@ -1639,4 +1593,4 @@ This Alpine Docker setup follows Koha's licensing (GPL v3). SSL certificates are
 
 ## Contributing
 
-Improvements, bug reports, and patches welcome! Submit to the koha-docker repository.
+Improvements, bug reports, and patches welcome! Submit to the koha-alpine repository.
