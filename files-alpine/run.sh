@@ -12,6 +12,10 @@ export BUILD_DIR=/kohadevbox
 export TEMP=/tmp
 export TZ=${TZ:-UTC}
 
+# Port defaults — these are set by docker-compose .env files but may be absent in bare docker run
+export KOHA_INTRANET_PORT=${KOHA_INTRANET_PORT:-8081}
+export KOHA_OPAC_PORT=${KOHA_OPAC_PORT:-8080}
+
 # Handy variables
 export KOHA_INTRANET_FQDN=${KOHA_INTRANET_PREFIX}${KOHA_INSTANCE}${KOHA_INTRANET_SUFFIX}${KOHA_DOMAIN}
 export KOHA_OPAC_FQDN=${KOHA_OPAC_PREFIX}${KOHA_INSTANCE}${KOHA_OPAC_SUFFIX}${KOHA_DOMAIN}
@@ -70,6 +74,17 @@ if [ ! -f "${BUILD_DIR}/koha/about.pl" ]; then
     exit 2
 fi
 
+# Phase 3: detect source location and set KOHA_PATH for dual-mode template rendering.
+# Dev: koha source is bind-mounted, koha-tmpl tree is present at BUILD_DIR/koha.
+# Prod: koha source is baked into the image at the same path, so detection is the same.
+# The fallback to /usr/share/koha covers a future fully-packaged Alpine install.
+if [ -d "${BUILD_DIR}/koha/koha-tmpl" ]; then
+    export KOHA_PATH="${BUILD_DIR}/koha"
+else
+    export KOHA_PATH="/usr/share/koha"
+fi
+export KOHA_LIB_PATH="${KOHA_PATH}/lib"
+
 # Latest Depends
 if [ "${CPAN}" = "yes" ]; then
     echo "Installing latest versions of dependancies from cpan"
@@ -98,7 +113,6 @@ fi
 
 append_if_absent "127.0.0.1 kohadevbox" /etc/hosts
 hostname kohadevbox
-
 
 # Remove packages for developers if it's a Jenkins run (CI_RUN=1)
 if [ "${CI_RUN}" = "yes" ]; then
@@ -167,57 +181,13 @@ export __DB_TLS_CA_CERTIFICATE__="${KOHA_DB_TLS_CA_CERTIFICATE}"
 export __DB_TLS_CLIENT_CERTIFICATE__="${KOHA_DB_TLS_CLIENT_CERTIFICATE}"
 export __DB_TLS_CLIENT_KEY__="${KOHA_DB_TLS_CLIENT_KEY}"
 
-# TODO: Have bugs pushed so all this is a koha-create parameter
-echo "${KOHA_INSTANCE}:${DB_USER}:${DB_PASSWORD}:${DB_NAME}" > /etc/koha/passwd
-# TODO: Get rid of this hack with the relevant bug
-echo "[client]"                              > /etc/mysql/koha-common.cnf
-echo "host     = ${DB_HOSTNAME}"            >> /etc/mysql/koha-common.cnf
-echo "user     = root"                      >> /etc/mysql/koha-common.cnf
-echo "password = ${KOHA_DB_ROOT_PASSWORD}"  >> /etc/mysql/koha-common.cnf
-if [ "${KOHA_DB_USE_TLS}" = "yes" ]; then
-    echo "ssl      = on"                        >> /etc/mysql/koha-common.cnf
-    if [ -n "${KOHA_DB_TLS_CA_CERTIFICATE}" ]; then
-        echo "ssl-ca   = ${KOHA_DB_TLS_CA_CERTIFICATE}" >> /etc/mysql/koha-common.cnf
-    fi
-    if [ -n "${KOHA_DB_TLS_CLIENT_CERTIFICATE}" ]; then
-        echo "ssl-cert = ${KOHA_DB_TLS_CLIENT_CERTIFICATE}" >> /etc/mysql/koha-common.cnf
-    fi
-    if [ -n "${KOHA_DB_TLS_CLIENT_KEY}" ]; then
-        echo "ssl-key  = ${KOHA_DB_TLS_CLIENT_KEY}" >> /etc/mysql/koha-common.cnf
-    fi
-else
-    echo "ssl      = off"                       >> /etc/mysql/koha-common.cnf
-    echo "skip-ssl"                             >> /etc/mysql/koha-common.cnf
-fi
-cp /etc/mysql/koha-common.cnf /etc/mysql/debian.cnf
-chmod 600 /etc/mysql/debian.cnf
-
-
-echo "[client]"                          > /etc/mysql/koha_${KOHA_INSTANCE}.cnf
-echo "host     = ${DB_HOSTNAME}"        >> /etc/mysql/koha_${KOHA_INSTANCE}.cnf
-echo "user     = ${DB_USER}"            >> /etc/mysql/koha_${KOHA_INSTANCE}.cnf
-echo "password = ${DB_PASSWORD}"        >> /etc/mysql/koha_${KOHA_INSTANCE}.cnf
-if [ "${KOHA_DB_USE_TLS}" = "yes" ]; then
-    echo "ssl      = on"                    >> /etc/mysql/koha_${KOHA_INSTANCE}.cnf
-    if [ -n "${KOHA_DB_TLS_CA_CERTIFICATE}" ]; then
-        echo "ssl-ca   = ${KOHA_DB_TLS_CA_CERTIFICATE}" >> /etc/mysql/koha_${KOHA_INSTANCE}.cnf
-    fi
-    if [ -n "${KOHA_DB_TLS_CLIENT_CERTIFICATE}" ]; then
-        echo "ssl-cert = ${KOHA_DB_TLS_CLIENT_CERTIFICATE}" >> /etc/mysql/koha_${KOHA_INSTANCE}.cnf
-    fi
-    if [ -n "${KOHA_DB_TLS_CLIENT_KEY}" ]; then
-        echo "ssl-key  = ${KOHA_DB_TLS_CLIENT_KEY}" >> /etc/mysql/koha_${KOHA_INSTANCE}.cnf
-    fi
-else
-    echo "ssl      = off"                   >> /etc/mysql/koha_${KOHA_INSTANCE}.cnf
-    echo "skip-ssl"                         >> /etc/mysql/koha_${KOHA_INSTANCE}.cnf
-fi
+write_db_client_configs "${KOHA_INSTANCE}"
 
 # Get rid of Apache warnings
 if [ -f /etc/apache2/httpd.conf ]; then
-    append_if_absent "ServerName kohadevbox"        /etc/apache2/httpd.conf
-    append_if_absent "Listen ${KOHA_INTRANET_PORT}" /etc/apache2/httpd.conf
-    append_if_absent "Listen ${KOHA_OPAC_PORT}"     /etc/apache2/httpd.conf
+    append_if_absent "ServerName kohadevbox"                          /etc/apache2/httpd.conf
+    append_if_absent "Listen ${KOHA_INTRANET_PORT:-8081}" /etc/apache2/httpd.conf
+    append_if_absent "Listen ${KOHA_OPAC_PORT:-8080}"     /etc/apache2/httpd.conf
 fi
 
 # Pull the names of the environment variables to substitute from defaults.env and convert them to a string of the format "$VAR1:$VAR2:$VAR3", etc.
@@ -225,7 +195,7 @@ fi
 # comment lines with spaces don't truncate the awk field-split output.
 VARS_TO_SUB=$(grep -v '^[[:space:]]*#' "${BUILD_DIR}/templates/defaults.env" | grep '=' | cut -d '=' -f1 | tr '\n' ':' | sed -e 's/:/:$/g' | sed -e 's/:\$$//' | sed -e 's/^/\$/')
 # Add additional vars to sub from this script that are not in defaults.env
-VARS_TO_SUB="\$DB_NAME:\$DB_PASSWORD:\$DB_USER:\$BUILD_DIR:\$__DB_USE_TLS__:\$__DB_TLS_CA_CERTIFICATE__:\$__DB_TLS_CLIENT_CERTIFICATE__:\$__DB_TLS_CLIENT_KEY__:$VARS_TO_SUB";
+VARS_TO_SUB="\$DB_NAME:\$DB_PASSWORD:\$DB_USER:\$BUILD_DIR:\$KOHA_PATH:\$KOHA_LIB_PATH:\$__DB_USE_TLS__:\$__DB_TLS_CA_CERTIFICATE__:\$__DB_TLS_CLIENT_CERTIFICATE__:\$__DB_TLS_CLIENT_KEY__:$VARS_TO_SUB";
 
 envsubst "$VARS_TO_SUB" < ${BUILD_DIR}/templates/root_bashrc           > /root/.bashrc
 envsubst "$VARS_TO_SUB" < ${BUILD_DIR}/templates/vimrc                 > /root/.vimrc
@@ -378,7 +348,6 @@ if [[ ! -z "${LOCAL_USER_ID}" && "${LOCAL_USER_ID}" != "1000" ]]; then
     chown -R "${KOHA_INSTANCE}-koha" "/var/log/koha/${KOHA_INSTANCE}"
     chown -R "${KOHA_INSTANCE}-koha" "/var/run/koha/${KOHA_INSTANCE}"
     chown -R "${KOHA_INSTANCE}-koha" ${BUILD_DIR}/misc4dev
-    chown -R "${KOHA_INSTANCE}-koha" ${BUILD_DIR}/gitify
     chown -R "${KOHA_INSTANCE}-koha" ${BUILD_DIR}/qa-test-tools
 fi
 
@@ -400,19 +369,13 @@ if [ "${GIT_WORKTREE_SOURCE}" != "" ]; then
     echo "    [*] Added '${GIT_WORKTREE_SOURCE}' to safe directories"
 fi
 
-install_git_hooks "${GIT_BASE_DIR}"
+install_git_hooks "${GIT_BASE_DIR}" || echo "    [!] Git hooks setup skipped (permission denied — repo owned by host user)"
 
 # This needs to be done ONCE koha-create has run (i.e. kohadev-koha user exists)
 envsubst "$VARS_TO_SUB" < ${BUILD_DIR}/templates/apache2_envvars > /etc/apache2/envvars
 
-# gitify instance
-cd ${BUILD_DIR}/gitify
-if [ -x ./koha-gitify ]; then
-    ./koha-gitify ${KOHA_INSTANCE} "/kohadevbox/koha"
-else
-    echo "[koha-gitify] WARNING: koha-gitify helper not available; skipping"
-fi
-cd ${BUILD_DIR}
+# Phase 3: render vhost from dual-mode template (KOHA_PATH already set above)
+render_vhost "${KOHA_INSTANCE}"
 
 if command -v koha-enable >/dev/null 2>&1; then
     koha-enable ${KOHA_INSTANCE}
@@ -420,9 +383,9 @@ else
     echo "[koha-enable] WARNING: koha-enable not available; skipping"
 fi
 
-if command -v a2ensite >/dev/null 2>&1; then
-    a2ensite ${KOHA_INSTANCE}.conf
-fi
+mkdir -p /etc/apache2/sites-enabled
+ln -sf "/etc/apache2/sites-available/${KOHA_INSTANCE}.conf" \
+       "/etc/apache2/sites-enabled/${KOHA_INSTANCE}.conf"
 
 cp /kohadevbox/koha/package.json /kohadevbox
 cp /kohadevbox/koha/yarn.lock    /kohadevbox
@@ -627,8 +590,7 @@ if [ "${RUN_DB_POPULATION}" = "yes" ]; then
                 --marcflavour       ${KOHA_MARC_FLAVOUR} \
                 --koha_dir          ${BUILD_DIR}/koha \
                 --opac-base-url     ${KOHA_OPAC_URL} \
-                --intranet-base-url ${KOHA_INTRANET_URL} \
-                --gitify_dir        ${BUILD_DIR}/gitify || {
+                --intranet-base-url ${KOHA_INTRANET_URL} || {
         echo "[db-population] WARNING: Database population failed (Perl compilation error detected)"
         echo "[db-population] This is expected if Koha source has known issues (e.g., ZOOM::Event::ZEND bareword)"
         echo "[db-population] Apache will still start and CGI execution is functional"
@@ -675,18 +637,22 @@ fi
 echo "[alpine] Enabling mod_cgi module for Perl CGI script execution..."
 sed -i 's/^[[:space:]]*#LoadModule cgi_module modules\/mod_cgi\.so/LoadModule cgi_module modules\/mod_cgi.so/' /etc/apache2/httpd.conf 2>/dev/null || true
 
-# Alpine CGI fix: Enable CGI script execution for .pl files in /kohadevbox/koha directory
-# The koha-create generated templates lack the necessary CGI handler directives for Alpine
-echo "[alpine] Enabling CGI execution for Perl scripts in /etc/koha/apache-shared-*-git.conf..."
-for _conf_file in /etc/koha/apache-shared-opac-git.conf /etc/koha/apache-shared-intranet-git.conf; do
-    if [ -f "${_conf_file}" ]; then
-        # Add Options and AddHandler directives inside the /kohadevbox/koha Directory block
-        # Match the pattern: <Directory "/kohadevbox/koha"> and Require all granted
-        # Insert Options and AddHandler before the closing </Directory>
-        sed -i '/<Directory "\/kohadevbox\/koha">/a\        Options +ExecCGI +FollowSymlinks\n        AddHandler cgi-script .pl' "${_conf_file}" 2>/dev/null || true
-    fi
-done
-unset _conf_file
+# Alpine PERL5LIB fix: the Debian-installed apache-shared.conf hardcodes PERL5LIB to
+# /usr/share/koha/lib (the Debian package path), overriding the vhost's SetEnv which
+# correctly points to the git-checkout or bind-mount. Remove the conflicting SetEnv.
+sed -i '/^[[:space:]]*SetEnv PERL5LIB[[:space:]]/d' /etc/koha/apache-shared.conf 2>/dev/null || true
+
+# Alpine shared-conf path fix: apache-shared-intranet.conf and apache-shared-opac.conf
+# reference /usr/share/koha/* Debian package paths which don't exist here.
+# Rewrite DocumentRoot (must come from our vhost template) and all /usr/share/koha paths.
+sed -i "/^[[:space:]]*DocumentRoot[[:space:]]/d; \
+        s|/usr/share/koha/intranet/cgi-bin|${KOHA_PATH}|g; \
+        s|/usr/share/koha/api|${KOHA_PATH}/api|g" \
+    /etc/koha/apache-shared-intranet.conf 2>/dev/null || true
+sed -i "/^[[:space:]]*DocumentRoot[[:space:]]/d; \
+        s|/usr/share/koha/opac/cgi-bin/opac|${KOHA_PATH}/opac|g; \
+        s|/usr/share/koha/api|${KOHA_PATH}/api|g" \
+    /etc/koha/apache-shared-opac.conf 2>/dev/null || true
 
 # Stop apache2
 stop_apache_service
@@ -778,18 +744,14 @@ start_koha_service
 # Start apache2
 start_apache_service
 
+# Phase 5: Start Alpine crond for periodic maintenance tasks (/etc/periodic/).
+start_crond
+
 touch /ktd_ready
 touch /kohadevbox/koha/.alpine-bootstrap-complete
 echo "koha-testing-docker has started up and is ready to be enjoyed!"
 
-# start koha-reload-starman, if we have inotify installed
-#    if [ -f "/usr/bin/inotifywait" ]; then
-#        daemon  --verbose=1 \
-#            --name=reload-starman \
-#            --respawn \
-#            --delay=15 \
-#            --pidfiles=/var/run/koha/kohadev/ -- /kohadevbox/koha-reload-starman
-#    fi
-
-# TODO: We could use supervise as the main loop
-/bin/bash -c "trap : TERM INT; sleep infinity & wait"
+# Phase 5: Service watchdog — keeps koha-plack and koha-worker alive.
+# Replaces the old blocking-loop container-keep-alive pattern.  Handles SIGTERM/SIGINT
+# for graceful container shutdown.
+run_service_watchdog "${KOHA_INSTANCE}"

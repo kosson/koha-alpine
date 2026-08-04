@@ -4,7 +4,8 @@
 # Runs the default Alpine test suites in order:
 #   1. Static analysis  (no Docker needed)
 #   2. Unit tests       (no Docker needed)
-#   3. Safe integration tests (require Docker; destructive DB race test is excluded)
+#   3. Phase 4 rewrite guardrails (runtime checks may skip when image is absent)
+#   4. Safe integration tests (require Docker; destructive DB race test is excluded)
 #
 # Usage:
 #   cd koha-alpine
@@ -26,9 +27,13 @@ fi
 
 SUITES=(
     "${TESTS_DIR}/test_dockerfile_perl_deps_static.sh"
+    "${TESTS_DIR}/test_phase2_build_staging_static.sh"
+    "${TESTS_DIR}/test_phase3_dual_mode_templating_static.sh"
     "${TESTS_DIR}/test_stack_sh_static.sh"
     "${TESTS_DIR}/test_run_sh_static.sh"
     "${TESTS_DIR}/test_db_detection_unit.sh"
+    "${TESTS_DIR}/run_phase4_rewrite_guardrails.sh"
+    "${TESTS_DIR}/test_phase5_supervision.sh"
     "${TESTS_DIR}/test_restart_integration.sh"
     "${TESTS_DIR}/test_authority_groupby_sqlmode_integration.sh"
     "${TESTS_DIR}/test_opensearch_os01_auth_integration.sh"
@@ -37,9 +42,13 @@ SUITES=(
 
 SUITE_LABELS=(
     "Static analysis         (Dockerfile Perl deps)"
+    "Static analysis         (Phase 2 build-time staging)"
+    "Static analysis         (Phase 3 dual-mode templating)"
     "Static analysis         (stack-alpine backup/restore)"
     "Static analysis         (files-alpine/run.sh)"
     "Unit tests              (mock mysql)"
+    "Phase 4 guardrails      (rewrite umbrella suite)"
+    "Phase 5 guardrails      (OpenRC supervision and crond)"
     "Integration test        (Docker restart)"
     "Integration test        (authority SQL mode guard)"
     "Integration test        (OpenSearch os01 auth)"

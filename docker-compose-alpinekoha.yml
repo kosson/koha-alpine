@@ -36,6 +36,8 @@ services:
     koha:
         image: ${KOHA_ALPINE_IMAGE_TAG:-kosson/koha-alpine:26.11}
         pull_policy: never
+        mem_limit: 4g
+        cpus: 2
         build:
             context: .
             dockerfile: Dockerfile-Alpine

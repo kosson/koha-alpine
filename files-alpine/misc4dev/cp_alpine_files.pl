@@ -20,17 +20,15 @@ use File::Basename qw( dirname );
 use Getopt::Long;
 use IPC::Cmd qw( run );
 
-my ( $koha_dir, $gitify_dir );
+my $koha_dir;
 my $instance   = 'kohadev';
 
 GetOptions(
     'koha_dir=s'   => \$koha_dir,
-    'gitify_dir=s' => \$gitify_dir,
     'instance=s'   => \$instance,
 );
 
 die "Missing mandatory option 'koha_dir'"   unless $koha_dir;
-die "Missing mandatory option 'gitify_dir'" unless $gitify_dir;
 
 my $koha_debian_dir = "$koha_dir/debian";
 
@@ -40,7 +38,9 @@ while ( my $line = <$fh> ) {
     chomp $line;
     $line =~ s|\s+| |;
     my ( $from, $to ) = split ' ', $line;
-    next unless $to; # TODO We could handle that
+    # Debian convention: no dest → strip leading "debian/tmp" to get absolute path
+    if ( !$to && $from =~ s|^debian/tmp||) { $to = $from; $from = "debian/tmp$from" }
+    next unless $to;
     next if $from =~ m|/tmp/|;
     next if $from =~ m|/tmp_docbook/|; # Done later
     $to = "/$to";
@@ -69,11 +69,6 @@ foreach my $debian_file ( keys %{ $system_files_mapping } ) {
 run( command => "sudo xsltproc --output /usr/share/man/man8/ /usr/share/xml/docbook/stylesheet/docbook-xsl-ns/manpages/docbook.xsl $koha_debian_dir/docs/*.xml", verbose => 1 );
 run( command => "sudo rm /usr/share/man/man8/koha-*.8.gz", verbose => 1 );
 run( command => "sudo gzip /usr/share/man/man8/koha-*.8", verbose => 1 );
-
-# Update *-git.conf apache files
-run( command => "sudo cp $koha_dir/debian/templates/apache-shared*.conf /etc/koha/" );
-run( command => "sudo rm /etc/koha/apache-shared-opac-git.conf /etc/koha/apache-shared-intranet-git.conf" );
-run( command => "cd $gitify_dir; sudo ./koha-gitify $instance $koha_dir" );
 
 run( command => "sudo chown -R $instance-koha:$instance-koha /etc/koha/sites/$instance" );
 

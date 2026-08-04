@@ -13,7 +13,7 @@ Skills wise, you need to know how to use a terminal shell, and to use a Linux/GN
 ## Table of Contents
 
 1. [Quick Start](#quick-start)
-2. [Using stack-alpine.sh](#using-stack-alpinesh)
+2. [Using stack-alpine.sh](#using-stack-alpinesh-script)
 3. [SSL Certificate Management](#ssl-certificate-management)
 4. [Project Structure](#project-structure)
 5. [Environment Configuration](#environment-configuration)
@@ -153,38 +153,39 @@ Use this when you are actively editing Koha code. The `./koha` directory from yo
 
 Use this when you want an immutable, version-pinned runtime that does not depend on a local source directory. The Koha source tree is fetched from the community git at build time using a released tag and stored inside the image. This will balloon the image to almost 4.48GB in size.
 
-First step, build the Koha image running the command:
+**Step 1 — choose a Koha release tag**
+
+Koha releases frequently. Use the built-in helper to discover and pin the version you want:
 
 ```bash
-# Build the prod image from a released Koha tag (~10-15 min, fetches source from git)
-./stack-alpine.sh build \
-  --image-mode prod \
-  --koha-version 25.11.06-1 \
-  --koha-ref 25.11.06-1 \
-  --build-koha
+# Show the latest upstream release tag (read-only, no changes)
+./stack-alpine.sh latest-tag
+
+# Write the latest release into env/.env automatically
+./stack-alpine.sh latest-tag --apply
+
+# OR pin a specific known-good release
+./stack-alpine.sh latest-tag --apply v25.11.06-1
 ```
 
-Second, create the certificates MariaDB needs to communicate with Koha.
+This writes `KOHA_GIT_TAG` to `env/.env`, which is the single value that flows through the entire build pipeline. The leading `v` is added automatically if you omit it.
+
+**Step 2 — build the prod image** (~10-15 min, clones Koha source at build time)
 
 ```bash
-# Prepare MariaDB TLS client cert/key and auto-wire env/.env
+./stack-alpine.sh build --image-mode prod --build-koha
+```
+
+**Step 3 — prepare MariaDB TLS client certificates**
+
+```bash
 ./stack-alpine.sh tls-client-cert
 ```
 
-Now, you are ready to start the Koha application by bringing up to life all the services running the command:
+**Step 4 — start the full stack**
 
 ```bash
-# Start the full managed stack in prod mode with the same version and ref
-./stack-alpine.sh start \
-  --image-mode prod \
-  --koha-version 25.11.06-1 \
-  --koha-ref v25.11.06-1
-```
-
-The version mentioned as value for `--koha-ref` must be an existing git tag. To find the latest available tag run:
-
-```bash
-git ls-remote --tags https://git.koha-community.org/Koha-community/Koha.git | grep "refs/tags/v2" | sort -V | tail -10
+./stack-alpine.sh start --image-mode prod
 ```
 
 > **Not sure which mode to pick?** Start with Mode A. It is faster to set up, easier to troubleshoot, and is what most developers use day-to-day. Switch to Mode B when you need a fixed, deployable artifact.
@@ -337,7 +338,7 @@ docker compose -f docker-compose-alpinekoha.yml build
 ./stack-alpine.sh tls-client-cert
 
 # 5. Start via stack manager (recommended)
-./stack-alpine.sh startv25.11.06-1
+./stack-alpine.sh start
 ```
 
 Important:
@@ -350,7 +351,6 @@ Important:
 ```bash
 # Wait 120-140 seconds for full bootstrap, then check:
 docker compose -f docker-compose-alpinekoha.yml logs --tail=80 koha
-v26.05.01-1
 # Should see: "koha-testing-docker has started up and is ready to be enjoyed!"
 
 # Optional: confirm Apache CGI is available before running tests
@@ -379,7 +379,7 @@ Use the staff interface at [http://localhost:8081](http://localhost:8081).
 | **Staff/Intranet** (admin) | http://localhost:8081 | 8081 | Library staff interface |
 | **Database** | localhost:3306 | 3306 | Internal only (SSL required) |
 | **RabbitMQ Management** | http://localhost:15672 | 15672 | STOMP: localhost:61613 |
-| **Memcached** | localhost:11211 | 11211 | Internal caching |v26.05.01-1
+| **Memcached** | localhost:11211 | 11211 | Internal caching |
 
 ### Stop the Stack
 
@@ -392,75 +392,68 @@ docker compose -f docker-compose-alpinekoha.yml stop
 
 ## Using stack-alpine.sh script
 
-The `stack-alpine.sh` script is the Alpine-oriented orchestration wrapper for Koha + MariaDB + Memcached + RabbitMQ, with optional OpenSearch and Traefik lifecycle.
-You MUST run all the commands from the `koha-alpine` directory:
+`stack-alpine.sh` is the single entry point for building, starting, stopping, and
+maintaining the entire Alpine Koha stack. All commands must be run from the `koha-alpine`
+root directory.
 
 ```bash
 cd /path/to/your/koha-alpine
+./stack-alpine.sh --help          # full option reference
 ```
 
-Common commands:
+For the complete command reference, flag descriptions, and worked examples see
+[HELP-STACK-ALPINE-SCRIPT.md](HELP-STACK-ALPINE-SCRIPT.md).
+
+### Most common operations
 
 ```bash
-# Start full stack (default command)
-./stack-alpine.sh start
-
-# Start and keep current DB contents
-./stack-alpine.sh start --no-fresh-db
-
-# Only use --no-fresh-db when Koha has already been bootstrapped once.
-# On a zero-state machine the script now falls back to a fresh bootstrap,
-# but the default first-run flow is still the recommended path.
-
-# Start without following logs
-./stack-alpine.sh start --no-logs
-
-# Quick restart of Koha path (OpenSearch remains up)
-./stack-alpine.sh restart
-
-# Stop everything managed by the script
-./stack-alpine.sh stop
-
-# Build images only
-./stack-alpine.sh build --build
-
-# Generate/refresh DB TLS client cert/key and auto-wire env/.env
-./stack-alpine.sh tls-client-cert
-
-# Run the helper automatically before startup/restart/build
-./stack-alpine.sh start --prepare-db-client-tls
-
-# Force-regenerate client cert/key and apply env values
-./stack-alpine.sh tls-client-cert --force-client-tls-regen
-
-# Show status and health summary
-./stack-alpine.sh status
-
-# Follow Koha startup/runtime logs
-./stack-alpine.sh logs
+./stack-alpine.sh start                           # fresh DB + demo data (dev mode, default)
+./stack-alpine.sh start --no-fresh-db             # resume with existing database
+./stack-alpine.sh start --no-demo-data            # fresh DB, empty catalogue
+./stack-alpine.sh restart                         # reset DB + recreate Koha only (OS stays up)
+./stack-alpine.sh stop                            # stop the whole stack
+./stack-alpine.sh status                          # show container health summary
+./stack-alpine.sh logs                            # tail Koha startup logs
+./stack-alpine.sh reset                           # ⚠ destructive: removes containers + volumes
 ```
 
-Alpine-specific startup profile:
+### Building images
 
 ```bash
-# Fast resume path for existing DB (default)
-./stack-alpine.sh start --bootstrap-profile resume --no-fresh-dbv25.11.06-1
+# Development image (fast, ~5 min; Koha source bind-mounted from host)
+./stack-alpine.sh build --image-mode dev --build-koha
 
-# Force full population/reindex path on existing DB
-./stack-alpine.sh start --bootstrap-profile full --no-fresh-db
+# Production image (slow, ~10-15 min; Koha source baked in at a released tag)
+./stack-alpine.sh latest-tag --apply              # set/update the release tag in env/.env
+./stack-alpine.sh build --image-mode prod --build-koha
 ```
 
-Safety notes:
-
-1. `start` without `--no-fresh-db` may recreate the Koha DB (with confirmation if data is detected).
-2. `--no-fresh-db` now checks for a successful bootstrap marker in `koha/.alpine-bootstrap-complete`. If the marker is missing, the script forces a full bootstrap on the existing DB instead of assuming the install is complete.
-3. `reset` is destructive, removes containers plus named volumes, and clears the bootstrap marker.
-4. Prefer `status` before and after operations to confirm OpenSearch/Koha health.
-
-For full options:
+### Selecting a Koha release for the production image
 
 ```bash
-./stack-alpine.sh --help
+./stack-alpine.sh latest-tag                      # show latest upstream tag (read-only)
+./stack-alpine.sh latest-tag --apply              # write latest tag to env/.env
+./stack-alpine.sh latest-tag --apply v25.11.06-1  # pin a specific release
+./stack-alpine.sh latest-tag --apply 25.11.06-1   # leading 'v' is added automatically
+```
+
+`KOHA_GIT_TAG` in `env/.env` is the single source of truth; both the image build and the
+compose project name derive from it automatically.
+
+### TLS client certificates
+
+```bash
+./stack-alpine.sh tls-client-cert                       # generate / reuse
+./stack-alpine.sh tls-client-cert --force-client-tls-regen  # force regeneration
+./stack-alpine.sh start --prepare-db-client-tls         # generate then start
+```
+
+### Backup and restore
+
+```bash
+./stack-alpine.sh backup                                             # saves to ./backups/
+./stack-alpine.sh backup --output /tmp/koha-backup.tar.gz
+./stack-alpine.sh restore backups/koha-backup-20260804T120000Z.tar.gz
 ```
 
 ## SSL Certificate Management
@@ -853,37 +846,76 @@ Notes:
 
 ### Build and start in Production context (fixed Koha version)
 
-Use this for immutable, version-pinned runtime builds. Always use a released git tag as `--koha-ref` for production. Pre-release branches (`main`) are only appropriate for development/staging images.
+Use this for immutable, version-pinned runtime builds.
+
+#### Step 1 — select the Koha release you want to bake in
+
+`KOHA_GIT_TAG` in `env/.env` is the **single source of truth** for which Koha version is
+baked into the prod image. Set it with the `latest-tag` helper before every prod build.
 
 ```bash
-# Build a stable released prod image — --koha-ref is the git tag for that release:
+# See what the current upstream latest release is (no changes to env/.env)
+./stack-alpine.sh latest-tag
+
+# Accept the latest release — writes KOHA_GIT_TAG=<latest> to env/.env
+./stack-alpine.sh latest-tag --apply
+
+# OR pin a specific past release (e.g. last known-stable 25.11 maintenance release)
+./stack-alpine.sh latest-tag --apply v25.11.06-1
+# The leading 'v' is optional: --apply 25.11.06-1 works the same way
+```
+
+Available tags can be listed with:
+```bash
+git ls-remote --tags https://git.koha-community.org/Koha-community/Koha.git \
+  | grep 'refs/tags/v2' | grep -v '\^{}' \
+  | awk '{print $2}' | sed 's|refs/tags/||' \
+  | sort -t. -k1,1V -k2,2n -k3,3n
+```
+
+> **Note on `sort -V`**: the `-REVISION` suffix in tags like `v25.11.06-1` confuses `sort -V`.
+> Use `sort -t. -k1,1V -k2,2n -k3,3n` (splits on `.` and sorts each numeric field) for
+> correct ordering. The `latest-tag` command does this for you automatically.
+
+#### Step 2 — build the image
+
+```bash
+# Build the prod image (~10-15 min; clones Koha at the tag set in env/.env)
+./stack-alpine.sh build --image-mode prod --build-koha
+```
+
+You can also override the tag on the fly without editing `env/.env`:
+
+```bash
 ./stack-alpine.sh build \
   --image-mode prod \
   --koha-version 25.11.06-1 \
   --koha-ref v25.11.06-1 \
   --build-koha
-
-# Start the stack in prod mode with the same version and ref:
-./stack-alpine.sh start \
-  --image-mode prod \
-  --koha-version 26.05.01-1 \
-  --koha-ref v26.05.01-1
 ```
 
-What these flags control:
+`--koha-version` sets the release label (image tag, compose project name).
+`--koha-ref` overrides `KOHA_GIT_TAG` from `env/.env` for this one build.
 
-1. `--image-mode prod` enables `docker-compose.prod.yml` override.
-2. `--koha-version` sets the release label (used for image tag and compose project naming).
-3. `--koha-ref` pins the Koha Git ref baked into the image. Always use the git tag for the release (e.g. `v25.11.01-2`). Available tags can be verified with `git ls-remote --tags https://git.koha-community.org/Koha-community/Koha.git`.
+#### Step 3 — start the stack
 
-> **Pre-release / development builds only:** if no stable tag exists yet for the target version (e.g. 26.11 before November 2026), pass `--koha-ref main` to build from the development branch. Do not use this in production.
+```bash
+# Uses KOHA_GIT_TAG from env/.env (set in step 1)
+./stack-alpine.sh start --image-mode prod
+
+# OR pass the version explicitly (must match what was built)
+./stack-alpine.sh start \
+  --image-mode prod \
+  --koha-version 25.11.06-1 \
+  --koha-ref v25.11.06-1
+```
+
+> **Pre-release / experimental builds only:** if no stable tag exists yet (e.g. 26.11 before
+> November 2026), pass `--koha-ref main`. Do **not** use `main` for production deployments.
 >
 > ```bash
-> ./stack-alpine.sh build \
->   --image-mode prod \
->   --koha-version 26.11.00 \
->   --koha-ref main \
->   --build-koha
+> ./stack-alpine.sh latest-tag --apply main
+> ./stack-alpine.sh build --image-mode prod --build-koha
 > ```
 
 ### Optional direct Docker Compose usage (without stack script)
@@ -891,7 +923,15 @@ What these flags control:
 If you need manual compose control for production mode:
 
 ```bash
-# Released version:
+# Preferred: set env/.env first, then let compose read it
+./stack-alpine.sh latest-tag --apply v25.11.06-1
+docker compose \
+  -f docker-compose-alpinekoha.yml \
+  -f docker-compose.prod.yml \
+  --env-file env/.env \
+  up -d --build
+
+# One-shot inline override (does not touch env/.env):
 KOHA_RELEASE_VERSION=25.11.06-1 \
 KOHA_RELEASE_REF=v25.11.06-1 \
 KOHA_ALPINE_PROD_IMAGE_TAG=kosson/koha-alpine-prod:25.11.06-1 \
@@ -900,23 +940,18 @@ docker compose \
   -f docker-compose.prod.yml \
   --env-file env/.env \
   up -d --build
-
-# Pre-release / development version:
-KOHA_RELEASE_VERSION=26.11.00 \
-KOHA_RELEASE_REF=main \
-KOHA_ALPINE_PROD_IMAGE_TAG=kosson/koha-alpine-prod:26.11.00 \
-docker compose \
-  -f docker-compose-alpinekoha.yml \
-  -f docker-compose.prod.yml \
-  --env-file env/.env \
-  up -d --build
 ```
+
+> `KOHA_GIT_REF` in the Dockerfile has **no default**. A prod build with neither
+> `KOHA_GIT_TAG` in `env/.env` nor `KOHA_RELEASE_REF` passed inline will fail fast with a
+> clear error message pointing to `./stack-alpine.sh latest-tag --apply`.
 
 ### Quick operational recommendations
 
 1. Keep development and production runs in separate compose projects/hosts.
-2. For production, always build with explicit `--koha-version` and `--koha-ref`.
-3. Reuse the exact same version/ref flags for `build` and `start` to avoid drift.
+2. Before every prod build, run `./stack-alpine.sh latest-tag` to see current releases.
+3. Use `./stack-alpine.sh latest-tag --apply [<tag>]` to set the version; it is the single
+   source of truth that flows to both the image build and the compose project name.
 4. Validate endpoints after startup in both modes:
    - `http://localhost:8080` (OPAC)
    - `http://localhost:8081` (Staff)

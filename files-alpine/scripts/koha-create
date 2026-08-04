@@ -1,0 +1,399 @@
+#!/bin/sh
+# Alpine-native koha-create implementation for the Koha Alpine migration.
+# Scope (first cut): --create-db and --use-db paths used by this repository.
+
+set -eu
+
+[ -r /etc/default/koha-common ] && . /etc/default/koha-common
+[ -r /etc/koha/koha-sites.conf ] && . /etc/koha/koha-sites.conf
+if [ -r /usr/sbin/koha-functions.sh ]; then
+    . /usr/sbin/koha-functions.sh
+elif [ -r /usr/share/koha/bin/koha-functions.sh ]; then
+    . /usr/share/koha/bin/koha-functions.sh
+fi
+
+log_info() { echo "[koha-create-alpine] $*"; }
+log_warn() { echo "[koha-create-alpine] WARNING: $*" >&2; }
+log_err() { echo "[koha-create-alpine] ERROR: $*" >&2; }
+die() { log_err "$*"; exit 1; }
+
+usage() {
+    cat <<'EOF'
+Usage:
+  koha-create [--create-db|--use-db] [options] instancename
+
+Supported DB modes:
+  --create-db               Create database/user and instance configuration.
+  --use-db                  Use existing database and instance configuration.
+
+Supported options (first cut):
+  --configfile file
+  --passwdfile file
+  --dbhost host
+  --database dbname
+  --marcflavor flavor
+  --zebralang lang
+  --memcached-servers list
+  --memcached-prefix prefix
+  --template-cache-dir dir
+  --upload-path dir
+  --tmp-path dir
+  --mb-host host
+  --mb-port port
+  --mb-user user
+  --mb-pass pass
+  --mb-vhost vhost
+  --help, -h
+EOF
+}
+
+require_root() {
+    [ "$(id -u)" -eq 0 ] || die "This script must be run as root"
+}
+
+rand_secret() {
+    if command -v pwgen >/dev/null 2>&1; then
+        pwgen -s 32 1
+        return 0
+    fi
+    if command -v openssl >/dev/null 2>&1; then
+        openssl rand -hex 16
+        return 0
+    fi
+    date +%s | sha256sum | awk '{print $1}'
+}
+
+rand_db_password() {
+    if command -v pwgen >/dev/null 2>&1; then
+        # Avoid characters that commonly break SQL/sed replacements.
+        pwgen -s -y -r ":'&\\<>/" 16 1
+        return 0
+    fi
+    rand_secret | cut -c1-16
+}
+
+getmysqlhost() {
+    if [ ! -f /etc/mysql/koha-common.cnf ]; then
+        echo localhost
+        return
+    fi
+    awk '
+        BEGIN { FS="=" }
+        $1 ~/\[/ { inclient=0 }
+        $1 ~/\[client\]/ { inclient=1; next }
+        inclient==1 && $1 ~/host/ { gsub(/ /, "", $2); print $2; exit }
+    ' /etc/mysql/koha-common.cnf
+}
+
+mysql_root_exec() {
+    if [ -f /etc/mysql/koha-common.cnf ]; then
+        mysql --defaults-extra-file=/etc/mysql/koha-common.cnf "$@"
+    else
+        mysql -u root "$@"
+    fi
+}
+
+esc_sed() {
+    # Escape sed replacement delimiter and special chars for safe substitution.
+    printf '%s' "$1" | sed -e 's/[\\&#]/\\&/g'
+}
+
+generate_config_file() {
+    tmpl="$1"
+    out="$2"
+
+    [ -f "/etc/koha/$tmpl" ] || die "Missing template /etc/koha/$tmpl"
+
+    touch "$out"
+    chown "root:$username" "$out"
+    [ "$tmpl" = "log4perl-site.conf.in" ] && chown "$username:$username" "$out"
+    chmod 0640 "$out"
+
+    sed -e "s#__KOHA_CONF_DIR__#/etc/koha/sites/$name#g" \
+        -e "s#__KOHASITE__#$(esc_sed "$name")#g" \
+        -e "s#__OPACPORT__#$(esc_sed "$OPACPORT")#g" \
+        -e "s#__INTRAPORT__#$(esc_sed "$INTRAPORT")#g" \
+        -e "s#__OPACSERVER__#$(esc_sed "$opacdomain")#g" \
+        -e "s#__INTRASERVER__#$(esc_sed "$intradomain")#g" \
+        -e "s#__ZEBRA_PASS__#$(esc_sed "$zebrapwd")#g" \
+        -e "s#__ZEBRA_MARC_FORMAT__#$(esc_sed "$ZEBRA_MARC_FORMAT")#g" \
+        -e "s#__ZEBRA_LANGUAGE__#$(esc_sed "$ZEBRA_LANGUAGE")#g" \
+        -e "s#__SRU_BIBLIOS_PORT__#$(esc_sed "$SRU_SERVER_PORT")#g" \
+        -e "s#__START_SRU_PUBLICSERVER__#$(esc_sed "$START_SRU_PUBLICSERVER")#g" \
+        -e "s#__END_SRU_PUBLICSERVER__#$(esc_sed "$END_SRU_PUBLICSERVER")#g" \
+        -e "s#__API_SECRET__#$(esc_sed "$API_SECRET")#g" \
+        -e "s#__DB_NAME__#$(esc_sed "$mysqldb")#g" \
+        -e "s#__DB_HOST__#$(esc_sed "$mysqlhost")#g" \
+        -e "s#__DB_USER__#$(esc_sed "$mysqluser")#g" \
+        -e "s#__DB_PASS__#$(esc_sed "$mysqlpwd")#g" \
+        -e "s#__ELASTICSEARCH_SERVER__#$(esc_sed "$ELASTICSEARCH_SERVER")#g" \
+        -e "s#__UNIXUSER__#$(esc_sed "$username")#g" \
+        -e "s#__UNIXGROUP__#$(esc_sed "$username")#g" \
+        -e "s#__TEMPLATE_CACHE_DIR__#$(esc_sed "$TEMPLATE_CACHE_DIR")#g" \
+        -e "s#__TIMEZONE__#$(esc_sed "$TIMEZONE")#g" \
+        -e "s#__BCRYPT_SETTINGS__#$(esc_sed "$BCRYPT_SETTINGS")#g" \
+        -e "s#__UPLOAD_PATH__#$(esc_sed "$UPLOAD_PATH")#g" \
+        -e "s#__TMP_PATH__#$(esc_sed "$TMP_PATH")#g" \
+        -e "s#__LOG_DIR__#/var/log/koha/$name#g" \
+        -e "s#__PLUGINS_DIR__#/var/lib/koha/$name/plugins#g" \
+        -e "s#__MEMCACHED_NAMESPACE__#$(esc_sed "$MEMCACHED_NAMESPACE")#g" \
+        -e "s#__MEMCACHED_SERVERS__#$(esc_sed "$MEMCACHED_SERVERS")#g" \
+        -e "s#__SMTP_HOST__#$(esc_sed "$SMTP_HOST")#g" \
+        -e "s#__SMTP_PORT__#$(esc_sed "$SMTP_PORT")#g" \
+        -e "s#__SMTP_TIMEOUT__#$(esc_sed "$SMTP_TIMEOUT")#g" \
+        -e "s#__SMTP_SSL_MODE__#$(esc_sed "$SMTP_SSL_MODE")#g" \
+        -e "s#__SMTP_USER_NAME__#$(esc_sed "$SMTP_USER_NAME")#g" \
+        -e "s#__SMTP_PASSWORD__#$(esc_sed "$SMTP_PASSWORD")#g" \
+        -e "s#__SMTP_DEBUG__#$(esc_sed "$SMTP_DEBUG")#g" \
+        -e "s#__MESSAGE_BROKER_HOST__#$(esc_sed "$MESSAGE_BROKER_HOST")#g" \
+        -e "s#__MESSAGE_BROKER_PORT__#$(esc_sed "$MESSAGE_BROKER_PORT")#g" \
+        -e "s#__MESSAGE_BROKER_USER__#$(esc_sed "$MESSAGE_BROKER_USER")#g" \
+        -e "s#__MESSAGE_BROKER_PASS__#$(esc_sed "$MESSAGE_BROKER_PASS")#g" \
+        -e "s#__MESSAGE_BROKER_VHOST__#$(esc_sed "$MESSAGE_BROKER_VHOST")#g" \
+        "/etc/koha/$tmpl" > "$out"
+}
+
+enable_apache_site() {
+    mkdir -p /etc/apache2/sites-enabled
+    if [ -f "/etc/apache2/sites-available/$name.conf" ]; then
+        ln -sf "/etc/apache2/sites-available/$name.conf" "/etc/apache2/sites-enabled/$name.conf"
+    else
+        log_warn "Missing /etc/apache2/sites-available/$name.conf; symlink not created"
+    fi
+}
+
+reload_apache() {
+    if command -v httpd >/dev/null 2>&1; then
+        httpd -k graceful >/dev/null 2>&1 || log_warn "httpd graceful reload failed"
+    fi
+}
+
+start_services() {
+    if command -v koha-zebra >/dev/null 2>&1; then
+        koha-zebra --start "$name" >/dev/null 2>&1 || log_warn "koha-zebra start failed"
+    fi
+
+    if command -v koha-worker >/dev/null 2>&1; then
+        if command -v get_worker_queues >/dev/null 2>&1; then
+            for queue in $(get_worker_queues); do
+                koha-worker --queue "$queue" --start "$name" >/dev/null 2>&1 || true
+            done
+        else
+            koha-worker --start "$name" >/dev/null 2>&1 || true
+        fi
+    fi
+}
+
+# Defaults aligned with upstream behavior where possible.
+op="create"
+PASSWDFILE="/etc/koha/passwd"
+DOMAIN="${DOMAIN:-}"
+OPACPORT="${OPACPORT:-80}"
+OPACPREFIX="${OPACPREFIX:-}"
+OPACSUFFIX="${OPACSUFFIX:-}"
+INTRAPORT="${INTRAPORT:-8080}"
+INTRAPREFIX="${INTRAPREFIX:-}"
+INTRASUFFIX="${INTRASUFFIX:-}"
+ZEBRA_MARC_FORMAT="${ZEBRA_MARC_FORMAT:-marc21}"
+ZEBRA_LANGUAGE="${ZEBRA_LANGUAGE:-en}"
+ELASTICSEARCH_SERVER="${ELASTICSEARCH_SERVER:-localhost:9200}"
+CACHE_DIR_BASE="${CACHE_DIR_BASE:-/var/cache/koha}"
+INSTANCE_PATH_BASE="${INSTANCE_PATH_BASE:-/var/lib/koha}"
+UPLOAD_DIR="${UPLOAD_DIR:-uploads}"
+TMP_DIR="${TMP_DIR:-tmp}"
+TIMEZONE="${TIMEZONE:-}"
+USE_MEMCACHED="${USE_MEMCACHED:-yes}"
+MEMCACHED_SERVERS="${MEMCACHED_SERVERS:-}"
+MEMCACHED_PREFIX="${MEMCACHED_PREFIX:-koha_}"
+DEFAULT_MEMCACHED_SERVERS="${DEFAULT_MEMCACHED_SERVERS:-127.0.0.1:11211}"
+DEFAULT_MEMCACHED_PREFIX="${DEFAULT_MEMCACHED_PREFIX:-koha_}"
+MESSAGE_BROKER_HOST="${MESSAGE_BROKER_HOST:-localhost}"
+MESSAGE_BROKER_PORT="${MESSAGE_BROKER_PORT:-61613}"
+MESSAGE_BROKER_USER="${MESSAGE_BROKER_USER:-guest}"
+MESSAGE_BROKER_PASS="${MESSAGE_BROKER_PASS:-guest}"
+MESSAGE_BROKER_VHOST="${MESSAGE_BROKER_VHOST:-}"
+SMTP_HOST="${SMTP_HOST:-localhost}"
+SMTP_PORT="${SMTP_PORT:-25}"
+SMTP_TIMEOUT="${SMTP_TIMEOUT:-120}"
+SMTP_SSL_MODE="${SMTP_SSL_MODE:-disabled}"
+SMTP_USER_NAME="${SMTP_USER_NAME:-}"
+SMTP_PASSWORD="${SMTP_PASSWORD:-}"
+SMTP_DEBUG="${SMTP_DEBUG:-0}"
+START_SRU_PUBLICSERVER="${START_SRU_PUBLICSERVER:-<!--}"
+END_SRU_PUBLICSERVER="${END_SRU_PUBLICSERVER:--->}"
+SRU_SERVER_PORT="${SRU_SERVER_PORT:-7090}"
+
+CLO_CONFIGFILE=""
+CLO_DATABASE=""
+CLO_DBHOST=""
+CLO_MEMCACHED_SERVERS=""
+CLO_MEMCACHED_PREFIX=""
+CLO_TEMPLATE_CACHE_DIR=""
+CLO_UPLOAD_PATH=""
+CLO_TMP_PATH=""
+CLO_DB_USER=""
+CLO_DB_PASSWORD=""
+CLO_DB_NAME=""
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --create-db) op="create"; shift ;;
+        --use-db) op="use"; shift ;;
+        --request-db|--populate-db)
+            die "Mode $1 is not supported in Alpine first-cut rewrite"
+            ;;
+        --configfile) CLO_CONFIGFILE="$2"; shift 2 ;;
+        --passwdfile) PASSWDFILE="$2"; shift 2 ;;
+        --dbhost) CLO_DBHOST="$2"; shift 2 ;;
+        --database) CLO_DATABASE="$2"; shift 2 ;;
+        --marcflavor) ZEBRA_MARC_FORMAT="$2"; shift 2 ;;
+        --zebralang) ZEBRA_LANGUAGE="$2"; shift 2 ;;
+        --memcached-servers) CLO_MEMCACHED_SERVERS="$2"; shift 2 ;;
+        --memcached-prefix) CLO_MEMCACHED_PREFIX="$2"; shift 2 ;;
+        --template-cache-dir) CLO_TEMPLATE_CACHE_DIR="$2"; shift 2 ;;
+        --upload-path) CLO_UPLOAD_PATH="$2"; shift 2 ;;
+        --tmp-path) CLO_TMP_PATH="$2"; shift 2 ;;
+        --mb-host) MESSAGE_BROKER_HOST="$2"; shift 2 ;;
+        --mb-port) MESSAGE_BROKER_PORT="$2"; shift 2 ;;
+        --mb-user) MESSAGE_BROKER_USER="$2"; shift 2 ;;
+        --mb-pass) MESSAGE_BROKER_PASS="$2"; shift 2 ;;
+        --mb-vhost) MESSAGE_BROKER_VHOST="$2"; shift 2 ;;
+        --db-user) CLO_DB_USER="$2"; shift 2 ;;
+        --db-password) CLO_DB_PASSWORD="$2"; shift 2 ;;
+        --db-name) CLO_DB_NAME="$2"; shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        --) shift; break ;;
+        -*) die "Unsupported option: $1" ;;
+        *) break ;;
+    esac
+done
+
+[ -n "$CLO_CONFIGFILE" ] && [ -r "$CLO_CONFIGFILE" ] && . "$CLO_CONFIGFILE"
+
+[ "$#" -ge 1 ] || { usage; die "Missing instance name"; }
+name="$1"
+
+case "$name" in
+    *[!A-Za-z0-9_-]*|'') die "Invalid instance name: $name" ;;
+esac
+
+require_root
+
+if [ -n "$CLO_MEMCACHED_SERVERS" ]; then
+    MEMCACHED_SERVERS="$CLO_MEMCACHED_SERVERS"
+elif [ -z "$MEMCACHED_SERVERS" ]; then
+    MEMCACHED_SERVERS="$DEFAULT_MEMCACHED_SERVERS"
+fi
+
+if [ -n "$CLO_MEMCACHED_PREFIX" ]; then
+    MEMCACHED_NAMESPACE="${CLO_MEMCACHED_PREFIX}${name}"
+else
+    MEMCACHED_NAMESPACE="${MEMCACHED_PREFIX:-$DEFAULT_MEMCACHED_PREFIX}${name}"
+fi
+
+if [ "$USE_MEMCACHED" = "no" ]; then
+    MEMCACHED_SERVERS=""
+    MEMCACHED_NAMESPACE=""
+fi
+
+UPLOAD_PATH="${CLO_UPLOAD_PATH:-$INSTANCE_PATH_BASE/$name/$UPLOAD_DIR}"
+TMP_PATH="${CLO_TMP_PATH:-$INSTANCE_PATH_BASE/$name/$TMP_DIR}"
+TEMPLATE_CACHE_DIR="${CLO_TEMPLATE_CACHE_DIR:-$CACHE_DIR_BASE/$name/templates}"
+
+opacdomain="${OPACPREFIX}${name}${OPACSUFFIX}${DOMAIN}"
+intradomain="${INTRAPREFIX}${name}${INTRASUFFIX}${DOMAIN}"
+
+mysqluser=""
+mysqlpwd=""
+mysqldb=""
+mysqlhost=""
+
+if [ -f "$PASSWDFILE" ]; then
+    passwdline=$(grep "^${name}:" "$PASSWDFILE" | head -n1 || true)
+    if [ -n "$passwdline" ]; then
+        mysqluser=$(echo "$passwdline" | cut -d: -f2)
+        mysqlpwd=$(echo "$passwdline" | cut -d: -f3)
+        mysqldb=$(echo "$passwdline" | cut -d: -f4)
+        mysqlhost=$(echo "$passwdline" | cut -d: -f5)
+    fi
+fi
+
+[ -n "$mysqldb" ] || mysqldb="koha_${name}"
+[ -n "$mysqluser" ] || mysqluser="koha_${name}"
+[ -n "$mysqlpwd" ] || mysqlpwd="$(rand_db_password)"
+[ -n "$mysqlhost" ] || mysqlhost="$(getmysqlhost)"
+[ -n "$mysqlhost" ] || mysqlhost="localhost"
+
+[ -n "$CLO_DATABASE" ] && mysqldb="$CLO_DATABASE"
+[ -n "$CLO_DBHOST" ] && mysqlhost="$CLO_DBHOST"
+[ -n "$CLO_DB_USER" ] && mysqluser="$CLO_DB_USER"
+[ -n "$CLO_DB_PASSWORD" ] && mysqlpwd="$CLO_DB_PASSWORD"
+[ -n "$CLO_DB_NAME" ] && mysqldb="$CLO_DB_NAME"
+
+# When credentials are supplied as CLI args, write/refresh the passwd file so
+# other tools (koha-shell, etc.) can look them up without needing the caller to
+# pre-populate /etc/koha/passwd before invoking koha-create.
+if [ -n "$CLO_DB_USER" ] || [ -n "$CLO_DB_PASSWORD" ] || [ -n "$CLO_DB_NAME" ]; then
+    mkdir -p "$(dirname "$PASSWDFILE")"
+    { grep -v "^${name}:" "$PASSWDFILE" 2>/dev/null || true; } > "${PASSWDFILE}.tmp"
+    printf '%s:%s:%s:%s:%s\n' "$name" "$mysqluser" "$mysqlpwd" "$mysqldb" "$mysqlhost" >> "${PASSWDFILE}.tmp"
+    mv "${PASSWDFILE}.tmp" "$PASSWDFILE"
+fi
+
+if [ -z "$MESSAGE_BROKER_VHOST" ]; then
+    MESSAGE_BROKER_VHOST="koha_${name}"
+fi
+
+username="${name}-koha"
+
+if ! getent group "$username" >/dev/null 2>&1; then
+    addgroup -S "$username" >/dev/null 2>&1 || addgroup "$username" >/dev/null
+fi
+
+if ! getent passwd "$username" >/dev/null 2>&1; then
+    adduser -S -D -H -h "/var/lib/koha/$name" -G "$username" -s /sbin/nologin "$username" >/dev/null
+fi
+
+koha-create-dirs "$name"
+mkdir -p "/var/log/koha/$name"
+chown "$username:$username" "/var/log/koha/$name"
+
+if [ "$op" = "create" ]; then
+    mysql_hostname="localhost"
+    log_info "Creating database and grants for $name"
+    mysql_root_exec <<EOF
+CREATE DATABASE IF NOT EXISTS \`$mysqldb\`;
+CREATE USER IF NOT EXISTS \`$mysqluser\`@'$mysql_hostname' IDENTIFIED BY '$mysqlpwd';
+GRANT ALL PRIVILEGES ON \`$mysqldb\`.* TO \`$mysqluser\`@'$mysql_hostname';
+FLUSH PRIVILEGES;
+EOF
+else
+    log_info "Using existing database for $name"
+    mysql --skip-ssl --host="$mysqlhost" --user="$mysqluser" --password="$mysqlpwd" "$mysqldb" -e 'SELECT 1;' >/dev/null
+fi
+
+zebrapwd="$(rand_secret | cut -c1-16)"
+API_SECRET="$(rand_secret)"
+
+if command -v htpasswd >/dev/null 2>&1; then
+    BCRYPT_SETTINGS=$(htpasswd -bnBC 10 "" password | tr -d ':\n' | sed 's/$2y/$2a/')
+else
+    BCRYPT_SETTINGS=""
+fi
+
+generate_config_file koha-conf-site.xml.in "/etc/koha/sites/$name/koha-conf.xml"
+generate_config_file log4perl-site.conf.in "/etc/koha/sites/$name/log4perl.conf"
+generate_config_file zebra-biblios-dom-site.cfg.in "/etc/koha/sites/$name/zebra-biblios-dom.cfg"
+generate_config_file zebra-authorities-dom-site.cfg.in "/etc/koha/sites/$name/zebra-authorities-dom.cfg"
+generate_config_file zebra.passwd.in "/etc/koha/sites/$name/zebra.passwd"
+
+enable_apache_site
+reload_apache
+start_services
+
+chown "$username:$username" "/var/log/koha/$name"/*.log 2>/dev/null || true
+
+cat <<EOF
+Email for this instance is disabled. When you're ready to enable it, use:
+koha-email-enable $name
+EOF

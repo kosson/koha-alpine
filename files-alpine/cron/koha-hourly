@@ -1,0 +1,26 @@
+#!/bin/sh
+# Koha hourly maintenance tasks — Alpine periodic cron.
+# Installed to /etc/periodic/hourly/koha-hourly by Dockerfile-Alpine.
+# Phase 5: Native Alpine crond integration.
+#
+# Run by crond via: run-parts /etc/periodic/hourly
+
+set -e
+
+KOHA_INSTANCE="${KOHA_INSTANCE:-kohadev}"
+export KOHA_CONF="/etc/koha/sites/${KOHA_INSTANCE}/koha-conf.xml"
+
+# Guard: skip silently if instance is not bootstrapped yet.
+[ -f "${KOHA_CONF}" ] || exit 0
+
+# Rebuild Zebra bibliographic and authority indexes (delta mode: changes only).
+if command -v koha-rebuild-zebra >/dev/null 2>&1; then
+    koha-rebuild-zebra -b -a -z "${KOHA_INSTANCE}" >/dev/null 2>&1 || true
+fi
+
+# Process enqueued outgoing messages (email, SMS).
+if command -v koha-shell >/dev/null 2>&1; then
+    sudo -n koha-shell "${KOHA_INSTANCE}" -c \
+        'perl /usr/share/koha/bin/cronjobs/process_message_queue.pl' \
+        >/dev/null 2>&1 || true
+fi

@@ -48,35 +48,35 @@ __END_SRU_PUBLICSERVER__
          <backend syntax="__ZEBRA_MARC_FORMAT__" name="F">
            <marc inputformat="marc" outputformat="marcxml"
                  inputcharset="utf-8"/>
-           <xslt stylesheet="/usr/share/koha/intranet/htdocs/intranet-tmpl/prog/en/xslt/MARC21slim2DC.xsl"/>
+           <xslt stylesheet="${KOHA_PATH}/koha-tmpl/intranet-tmpl/prog/en/xslt/MARC21slim2DC.xsl"/>
          </backend>
        </retrieval>
        <retrieval syntax="xml" name="mods">
          <backend syntax="__ZEBRA_MARC_FORMAT__" name="F">
            <marc inputformat="marc" outputformat="marcxml"
                  inputcharset="utf-8"/>
-           <xslt stylesheet="/usr/share/koha/intranet/htdocs/intranet-tmpl/prog/en/xslt/MARC21slim2MODS.xsl"/>
+           <xslt stylesheet="${KOHA_PATH}/koha-tmpl/intranet-tmpl/prog/en/xslt/MARC21slim2MODS.xsl"/>
          </backend>
        </retrieval>
        <retrieval syntax="xml" name="rdfdc">
          <backend syntax="__ZEBRA_MARC_FORMAT__" name="F">
            <marc inputformat="marc" outputformat="marcxml"
                  inputcharset="utf-8"/>
-           <xslt stylesheet="/usr/share/koha/intranet/htdocs/intranet-tmpl/prog/en/xslt/MARC21slim2RDFDC.xsl"/>
+           <xslt stylesheet="${KOHA_PATH}/koha-tmpl/intranet-tmpl/prog/en/xslt/MARC21slim2RDFDC.xsl"/>
          </backend>
        </retrieval>
        <retrieval syntax="xml" name="rss2">
          <backend syntax="__ZEBRA_MARC_FORMAT__" name="F">
            <marc inputformat="marc" outputformat="marcxml"
                  inputcharset="utf-8"/>
-           <xslt stylesheet="/usr/share/koha/intranet/htdocs/intranet-tmpl/prog/en/xslt/MARC21slim2RSS2.xsl"/>
+           <xslt stylesheet="${KOHA_PATH}/koha-tmpl/intranet-tmpl/prog/en/xslt/MARC21slim2RSS2.xsl"/>
          </backend>
        </retrieval>
        <retrieval syntax="xml" name="utils">
          <backend syntax="__ZEBRA_MARC_FORMAT__" name="F">
            <marc inputformat="marc" outputformat="marcxml"
                  inputcharset="utf-8"/>
-           <xslt stylesheet="/usr/share/koha/intranet/htdocs/intranet-tmpl/prog/en/xslt/MARC21slimUtils.xsl"/>
+           <xslt stylesheet="${KOHA_PATH}/koha-tmpl/intranet-tmpl/prog/en/xslt/MARC21slimUtils.xsl"/>
          </backend>
        </retrieval>
       </retrievalinfo>
@@ -129,28 +129,28 @@ __END_SRU_PUBLICSERVER__
          <backend syntax="__ZEBRA_MARC_FORMAT__" name="F">
            <marc inputformat="marc" outputformat="marcxml"
                  inputcharset="utf-8"/>
-           <xslt stylesheet="/usr/share/koha/intranet/htdocs/intranet-tmpl/prog/en/xslt/MARC21slim2DC.xsl"/>
+           <xslt stylesheet="${KOHA_PATH}/koha-tmpl/intranet-tmpl/prog/en/xslt/MARC21slim2DC.xsl"/>
          </backend>
        </retrieval>
        <retrieval syntax="xml" name="mods">
          <backend syntax="__ZEBRA_MARC_FORMAT__" name="F">
            <marc inputformat="marc" outputformat="marcxml"
                  inputcharset="utf-8"/>
-           <xslt stylesheet="/usr/share/koha/intranet/htdocs/intranet-tmpl/prog/en/xslt/MARC21slim2MODS.xsl"/>
+           <xslt stylesheet="${KOHA_PATH}/koha-tmpl/intranet-tmpl/prog/en/xslt/MARC21slim2MODS.xsl"/>
          </backend>
        </retrieval>
        <retrieval syntax="xml" name="rdfdc">
          <backend syntax="__ZEBRA_MARC_FORMAT__" name="F">
            <marc inputformat="marc" outputformat="marcxml"
                  inputcharset="utf-8"/>
-           <xslt stylesheet="/usr/share/koha/intranet/htdocs/intranet-tmpl/prog/en/xslt/MARC21slim2RDFDC.xsl"/>
+           <xslt stylesheet="${KOHA_PATH}/koha-tmpl/intranet-tmpl/prog/en/xslt/MARC21slim2RDFDC.xsl"/>
          </backend>
        </retrieval>
        <retrieval syntax="xml" name="utils">
          <backend syntax="__ZEBRA_MARC_FORMAT__" name="F">
            <marc inputformat="marc" outputformat="marcxml"
                  inputcharset="utf-8"/>
-           <xslt stylesheet="/usr/share/koha/intranet/htdocs/intranet-tmpl/prog/en/xslt/MARC21slimUtils.xsl"/>
+           <xslt stylesheet="${KOHA_PATH}/koha-tmpl/intranet-tmpl/prog/en/xslt/MARC21slimUtils.xsl"/>
          </backend>
        </retrieval>
       </retrievalinfo>
@@ -207,35 +207,35 @@ __START_SRU_PUBLICSERVER__
          <backend syntax="__ZEBRA_MARC_FORMAT__" name="F">
            <marc inputformat="marc" outputformat="marcxml"
                  inputcharset="utf-8"/>
-           <xslt stylesheet="/usr/share/koha/intranet/htdocs/intranet-tmpl/prog/en/xslt/MARC21slim2DC.xsl"/>
+           <xslt stylesheet="${KOHA_PATH}/koha-tmpl/intranet-tmpl/prog/en/xslt/MARC21slim2DC.xsl"/>
          </backend>
        </retrieval>
        <retrieval syntax="xml" name="mods">
          <backend syntax="__ZEBRA_MARC_FORMAT__" name="F">
            <marc inputformat="marc" outputformat="marcxml"
                  inputcharset="utf-8"/>
-           <xslt stylesheet="/usr/share/koha/intranet/htdocs/intranet-tmpl/prog/en/xslt/MARC21slim2MODS.xsl"/>
+           <xslt stylesheet="${KOHA_PATH}/koha-tmpl/intranet-tmpl/prog/en/xslt/MARC21slim2MODS.xsl"/>
          </backend>
        </retrieval>
        <retrieval syntax="xml" name="rdfdc">
          <backend syntax="__ZEBRA_MARC_FORMAT__" name="F">
            <marc inputformat="marc" outputformat="marcxml"
                  inputcharset="utf-8"/>
-           <xslt stylesheet="/usr/share/koha/intranet/htdocs/intranet-tmpl/prog/en/xslt/MARC21slim2RDFDC.xsl"/>
+           <xslt stylesheet="${KOHA_PATH}/koha-tmpl/intranet-tmpl/prog/en/xslt/MARC21slim2RDFDC.xsl"/>
          </backend>
        </retrieval>
        <retrieval syntax="xml" name="rss2">
          <backend syntax="__ZEBRA_MARC_FORMAT__" name="F">
            <marc inputformat="marc" outputformat="marcxml"
                  inputcharset="utf-8"/>
-           <xslt stylesheet="/usr/share/koha/intranet/htdocs/intranet-tmpl/prog/en/xslt/MARC21slim2RSS2.xsl"/>
+           <xslt stylesheet="${KOHA_PATH}/koha-tmpl/intranet-tmpl/prog/en/xslt/MARC21slim2RSS2.xsl"/>
          </backend>
        </retrieval>
        <retrieval syntax="xml" name="utils">
          <backend syntax="__ZEBRA_MARC_FORMAT__" name="F">
            <marc inputformat="marc" outputformat="marcxml"
                  inputcharset="utf-8"/>
-           <xslt stylesheet="/usr/share/koha/intranet/htdocs/intranet-tmpl/prog/en/xslt/MARC21slimUtils.xsl"/>
+           <xslt stylesheet="${KOHA_PATH}/koha-tmpl/intranet-tmpl/prog/en/xslt/MARC21slimUtils.xsl"/>
          </backend>
        </retrieval>
       </retrievalinfo>
@@ -282,13 +282,13 @@ __END_SRU_PUBLICSERVER__
  <enable_plugins>1</enable_plugins>
  <upload_path>__UPLOAD_PATH__</upload_path>
  <tmp_path>__TMP_PATH__</tmp_path>
- <intranetdir>/usr/share/koha/intranet/cgi-bin</intranetdir>
- <opacdir>/usr/share/koha/opac/cgi-bin/opac</opacdir>
- <opachtdocs>/usr/share/koha/opac/htdocs/opac-tmpl</opachtdocs>
- <intrahtdocs>/usr/share/koha/intranet/htdocs/intranet-tmpl</intrahtdocs>
- <includes>/usr/share/koha/intranet/htdocs/intranet-tmpl/prog/en/includes/</includes>
+ <intranetdir>${KOHA_PATH}</intranetdir>
+ <opacdir>${KOHA_PATH}/opac</opacdir>
+ <opachtdocs>${KOHA_PATH}/koha-tmpl/opac-tmpl</opachtdocs>
+ <intrahtdocs>${KOHA_PATH}/koha-tmpl/intranet-tmpl</intrahtdocs>
+ <includes>${KOHA_PATH}/koha-tmpl/intranet-tmpl/prog/en/includes/</includes>
  <logdir>__LOG_DIR__</logdir>
- <docdir>/usr/share/doc/koha-common</docdir>
+ <docdir>${KOHA_PATH}/docs</docdir>
  <backupdir>/var/spool/koha/__KOHASITE__</backupdir>
  <!-- URL of the mana KB server -->
  <!-- alternative value http://mana-test.koha-community.org to query the test server -->
@@ -299,7 +299,7 @@ __END_SRU_PUBLICSERVER__
  <backup_db_via_tools>0</backup_db_via_tools>
  <backup_conf_via_tools>0</backup_conf_via_tools>
  <!-- <pazpar2url>http://__PAZPAR2_HOST__:__PAZPAR2_PORT__/search.pz2</pazpar2url> -->
- <install_log>/usr/share/koha/misc/koha-install-log</install_log>
+ <install_log>${KOHA_PATH}/misc/koha-install-log</install_log>
  <useldapserver>0</useldapserver><!-- see C4::Auth_with_ldap for extra configs you must add if you want to turn this on -->
  <useshibboleth>0</useshibboleth><!-- see C4::Auth_with_shibboleth for extra configs you must do to turn this on -->
  <lockdir>/var/lock/koha/__KOHASITE__</lockdir>
@@ -375,7 +375,7 @@ __END_SRU_PUBLICSERVER__
  <interlibrary_loans>
      <!-- Path to where Illbackends are located on the system
           - This setting should normally not be touched -->
-     <backend_directory>/usr/share/koha/lib/Koha/Illbackends</backend_directory>
+     <backend_directory>${KOHA_LIB_PATH}/Koha/Illbackends</backend_directory>
      <!-- At least one <branch> block is required. -->
      <branch>
          <!-- The code of this branch -->

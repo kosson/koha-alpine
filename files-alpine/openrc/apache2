@@ -1,0 +1,48 @@
+#!/sbin/openrc-run
+# OpenRC service definition for Alpine Apache2 (httpd).
+# Installed to /etc/init.d/apache2 by Dockerfile-Alpine.
+# Phase 5: Replaces the crude shim with a proper OpenRC service script.
+#
+# Usage:
+#   rc-service apache2 start|stop|restart|reload|status
+
+name="Apache2 httpd"
+description="Apache HTTP Server for Koha (Alpine httpd)"
+pidfile="/var/run/apache2/httpd.pid"
+
+depend() {
+    need net
+}
+
+start() {
+    ebegin "Starting Apache2"
+    mkdir -p /var/run/apache2
+    /usr/sbin/httpd -k start
+    eend $?
+}
+
+stop() {
+    ebegin "Stopping Apache2"
+    /usr/sbin/httpd -k stop
+    eend $?
+}
+
+reload() {
+    ebegin "Reloading Apache2"
+    /usr/sbin/httpd -k graceful
+    eend $?
+}
+
+status() {
+    if pgrep -x httpd >/dev/null 2>&1; then
+        einfo "Apache2 is running"
+        return 0
+    fi
+    einfo "Apache2 is not running"
+    return 3
+}
+
+restart() {
+    stop
+    start
+}

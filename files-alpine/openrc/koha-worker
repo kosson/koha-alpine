@@ -1,0 +1,33 @@
+#!/sbin/openrc-run
+# OpenRC service definition for Koha background job worker (Alpine native).
+# Installed to /etc/init.d/koha-worker by Dockerfile-Alpine.
+# Phase 5: Alpine-native process supervision.
+#
+# Usage (once OpenRC is initialised in the container):
+#   rc-service koha-worker start|stop|restart|status
+
+name="Koha Worker"
+description="Koha background job worker (RabbitMQ queue consumer)"
+
+KOHA_INSTANCE="${KOHA_INSTANCE:-kohadev}"
+pidfile="/var/run/koha/${KOHA_INSTANCE}/worker-default.pid"
+
+depend() {
+    need net
+}
+
+start() {
+    ebegin "Starting Koha Worker (${KOHA_INSTANCE})"
+    /usr/sbin/koha-worker --start "${KOHA_INSTANCE}"
+    eend $?
+}
+
+stop() {
+    ebegin "Stopping Koha Worker (${KOHA_INSTANCE})"
+    /usr/sbin/koha-worker --stop "${KOHA_INSTANCE}"
+    eend $?
+}
+
+status() {
+    /usr/sbin/koha-worker --status "${KOHA_INSTANCE}"
+}

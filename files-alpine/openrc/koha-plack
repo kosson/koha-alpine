@@ -1,0 +1,40 @@
+#!/sbin/openrc-run
+# OpenRC service definition for Koha Plack/Starman (Alpine native).
+# Installed to /etc/init.d/koha-plack by Dockerfile-Alpine.
+# Phase 5: Alpine-native process supervision.
+#
+# Usage (once OpenRC is initialised in the container):
+#   rc-service koha-plack start|stop|restart|reload|status
+
+name="Koha Plack"
+description="Plack/Starman PSGI application server for Koha"
+
+KOHA_INSTANCE="${KOHA_INSTANCE:-kohadev}"
+pidfile="/var/run/koha/${KOHA_INSTANCE}/plack.pid"
+
+depend() {
+    need net
+    after apache2
+}
+
+start() {
+    ebegin "Starting Koha Plack (${KOHA_INSTANCE})"
+    /usr/sbin/koha-plack --start "${KOHA_INSTANCE}"
+    eend $?
+}
+
+stop() {
+    ebegin "Stopping Koha Plack (${KOHA_INSTANCE})"
+    /usr/sbin/koha-plack --stop "${KOHA_INSTANCE}"
+    eend $?
+}
+
+reload() {
+    ebegin "Reloading Koha Plack (${KOHA_INSTANCE})"
+    /usr/sbin/koha-plack --reload "${KOHA_INSTANCE}"
+    eend $?
+}
+
+status() {
+    /usr/sbin/koha-plack --status "${KOHA_INSTANCE}"
+}
