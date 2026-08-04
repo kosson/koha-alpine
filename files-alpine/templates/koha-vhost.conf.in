@@ -2,7 +2,7 @@
 # Intranet VirtualHost
 <VirtualHost *:${KOHA_INTRANET_PORT}>
     ServerName  ${KOHA_INTRANET_FQDN}
-    DocumentRoot ${KOHA_PATH}/koha-tmpl/intranet-tmpl
+    DocumentRoot ${KOHA_PATH}/koha-tmpl
     ScriptAlias  /cgi-bin/koha/ ${KOHA_PATH}/
     Alias /doc/ /usr/share/doc/
     SetEnv KOHA_CONF /etc/koha/sites/${KOHA_INSTANCE}/koha-conf.xml
@@ -30,7 +30,7 @@
 # OPAC VirtualHost
 <VirtualHost *:${KOHA_OPAC_PORT}>
     ServerName  ${KOHA_OPAC_FQDN}
-    DocumentRoot ${KOHA_PATH}/koha-tmpl/opac-tmpl
+    DocumentRoot ${KOHA_PATH}/koha-tmpl
     ScriptAlias  /cgi-bin/koha/opac/ ${KOHA_PATH}/opac/
     SetEnv KOHA_CONF /etc/koha/sites/${KOHA_INSTANCE}/koha-conf.xml
     SetEnv PERL5LIB  ${KOHA_PATH}:${KOHA_LIB_PATH}

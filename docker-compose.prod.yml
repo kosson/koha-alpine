@@ -1,15 +1,15 @@
 services:
     koha:
-        image: ${KOHA_ALPINE_PROD_IMAGE_TAG:-kosson/koha-alpine-prod:${KOHA_RELEASE_VERSION:-25.11.05-1}}
+        image: ${KOHA_ALPINE_PROD_IMAGE_TAG:-kosson/koha-alpine-prod:${KOHA_RELEASE_VERSION}}
         build:
             context: .
             dockerfile: Dockerfile-Alpine
             target: prod-runtime
             args:
                 KOHA_GIT_URL: ${KOHA_RELEASE_GIT_URL:-https://git.koha-community.org/Koha-community/Koha.git}
-                KOHA_GIT_REF: ${KOHA_RELEASE_REF:-v25.11.05-1}
+                KOHA_GIT_REF: ${KOHA_RELEASE_REF}
                 KOHA_GIT_DEPTH: ${KOHA_RELEASE_GIT_DEPTH:-1}
-                KOHA_VERSION: ${KOHA_RELEASE_VERSION:-25.11.05-1}
+                KOHA_VERSION: ${KOHA_RELEASE_VERSION}
         volumes:
             - ${OPENSEARCH_CA_CERT:-/dev/null}:/kohadevbox/opensearch-root-ca.pem:ro
             - ./files-alpine/mariadb-ssl:/etc/mysql/ssl:ro

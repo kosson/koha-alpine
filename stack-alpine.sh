@@ -68,6 +68,22 @@ _set_env_val() {
   fi
 }
 
+# Fetch the highest version tag from the upstream Koha git repository.
+# Tags follow the pattern vMAJOR.MINOR.PATCH[-REVISION] (e.g. v25.11.06-1, v26.05.01-1).
+# plain `sort -V` mis-orders the -REVISION suffix; splitting on '.' and sorting each
+# numeric field independently gives the correct order.
+koha_latest_tag() {
+  local url
+  url="${1:-${KOHA_GIT_URL:-${KOHA_DEFAULT_REPO_URL}}}"
+  git ls-remote --tags "${url}" 2>/dev/null \
+    | grep 'refs/tags/v2' \
+    | grep -v '\^{}' \
+    | awk '{print $2}' \
+    | sed 's|refs/tags/||' \
+    | sort -t. -k1,1V -k2,2n -k3,3n \
+    | tail -1
+}
+
 KOHA_INSTANCE="$(_env_val "${KOHA_ENV_FILE}" KOHA_INSTANCE kohadev)"
 KOHA_DOMAIN="$(_env_val   "${KOHA_ENV_FILE}" KOHA_DOMAIN   .myDNSname.org)"
 KOHA_INTRANET_SUFFIX="$(_env_val "${KOHA_ENV_FILE}" KOHA_INTRANET_SUFFIX -intra)"
@@ -212,8 +228,8 @@ configure_koha_mode() {
       KOHA_RELEASE_REF="v${KOHA_RELEASE_REF}"
     fi
 
-    [[ -n "${KOHA_RELEASE_VERSION}" ]] || die "KOHA_RELEASE_VERSION is required in prod mode"
-    [[ -n "${KOHA_RELEASE_REF}" ]] || die "KOHA_RELEASE_REF is required in prod mode"
+    [[ -n "${KOHA_RELEASE_VERSION}" ]] || die "KOHA_RELEASE_VERSION is required in prod mode. Set KOHA_GIT_TAG in env/.env or pass --koha-version."
+    [[ -n "${KOHA_RELEASE_REF}" ]] || die "KOHA_RELEASE_REF is required in prod mode. Set KOHA_GIT_TAG in env/.env, pass --koha-ref, or run: ./$(basename "$0") latest-tag --apply"
 
     if [[ -z "${KOHA_ALPINE_PROD_IMAGE_TAG}" ]]; then
       KOHA_ALPINE_PROD_IMAGE_TAG="kosson/koha-alpine-prod:${KOHA_RELEASE_VERSION}"
@@ -1062,6 +1078,7 @@ ${BOLD}Commands:${RESET}
   status      Show running containers and OpenSearch cluster health
   logs        Tail Koha container logs
   build       Build images without starting anything
+  latest-tag  Show the latest upstream Koha tag; --apply [<tag>] writes it to env/.env
   backup      Create a tar.gz backup bundle for env files + MariaDB data
   restore     Restore env files + MariaDB data from a backup bundle
 
@@ -1125,6 +1142,9 @@ ${BOLD}Examples:${RESET}
   $(basename "$0") backup                   # Create a backup in ./backups
   $(basename "$0") backup --output /tmp/koha-backup.tar.gz
   $(basename "$0") restore backups/koha-backup-YYYYMMDDTHHMMSSZ.tar.gz
+  $(basename "$0") latest-tag               # Show the latest Koha release tag
+  $(basename "$0") latest-tag --apply       # Write latest tag to env/.env, then build with build --image-mode prod --build-koha
+  $(basename "$0") latest-tag --apply v25.11.06-1  # Pin a specific release in env/.env
 
 EOF
 }
@@ -1143,6 +1163,8 @@ BACKUP_OUTPUT=""
 RESTORE_ARCHIVE=""
 PREPARE_DB_CLIENT_TLS=false
 FORCE_CLIENT_TLS_REGEN=false
+APPLY_LATEST_TAG=false
+KOHA_TAG_TO_APPLY=""
 # Read LOAD_DEMO_DATA from env/.env (default 'yes'); --no-demo-data / --with-demo-data override
 LOAD_DEMO_DATA="$(_env_val "${KOHA_ENV_FILE}" LOAD_DEMO_DATA yes)"
 ALPINE_BOOTSTRAP_PROFILE="$(_env_val "${KOHA_ENV_FILE}" ALPINE_BOOTSTRAP_PROFILE resume)"
@@ -1150,7 +1172,7 @@ ALPINE_BOOTSTRAP_PROFILE="$(_env_val "${KOHA_ENV_FILE}" ALPINE_BOOTSTRAP_PROFILE
 # Parse command (first positional arg)
 if [[ $# -gt 0 ]]; then
   case "$1" in
-    start|stop|restart|reset|status|logs|build|backup|restore|tls-client-cert) COMMAND="$1"; shift ;;
+    start|stop|restart|reset|status|logs|build|backup|restore|tls-client-cert|latest-tag) COMMAND="$1"; shift ;;
     --help|-h) usage; exit 0 ;;
     --*) : ;;  # no subcommand given, use default "start"
     *) die "Unknown command: '$1'. Run '$(basename "$0") --help' for usage." ;;
@@ -1185,6 +1207,13 @@ while [[ $# -gt 0 ]]; do
     --with-demo-data)    LOAD_DEMO_DATA=yes ;;
     --prepare-db-client-tls) PREPARE_DB_CLIENT_TLS=true ;;
     --force-client-tls-regen) FORCE_CLIENT_TLS_REGEN=true; PREPARE_DB_CLIENT_TLS=true ;;
+    --apply)
+      APPLY_LATEST_TAG=true
+      # optional explicit tag: --apply v25.11.06-1
+      if [[ $# -ge 2 && "${2}" != --* ]]; then
+        KOHA_TAG_TO_APPLY="$2"; shift
+      fi
+      ;;
     --output)
       [[ $# -ge 2 ]] || die "--output requires a file path"
       BACKUP_OUTPUT="$2"
@@ -1379,6 +1408,24 @@ case "${COMMAND}" in
     check_prereqs
     prepare_mariadb_client_tls
     ok "TLS client materials are ready. Next: ./$(basename "$0") restart --no-logs"
+    ;;
+
+  latest-tag)
+    hdr "Fetching latest Koha release tag"
+    latest="$(koha_latest_tag)"
+    [[ -n "${latest}" ]] || die "Could not resolve latest tag from ${KOHA_GIT_URL:-${KOHA_DEFAULT_REPO_URL}}"
+    ok "Latest upstream tag: ${latest}"
+    if [[ "${APPLY_LATEST_TAG}" == true ]]; then
+      target="${KOHA_TAG_TO_APPLY:-${latest}}"
+      # accept version without leading 'v' (e.g. 25.11.06-1 -> v25.11.06-1)
+      [[ "${target}" =~ ^v ]] || target="v${target}"
+      _set_env_val "${KOHA_ENV_FILE}" KOHA_GIT_TAG "${target}"
+      ok "Written KOHA_GIT_TAG=${target} to ${KOHA_ENV_FILE}"
+      log "Rebuild the prod image with: ./$(basename "$0") build --image-mode prod --build-koha"
+    else
+      log "To set the latest tag:         ./$(basename "$0") latest-tag --apply"
+      log "To set a specific tag:         ./$(basename "$0") latest-tag --apply v25.11.06-1"
+    fi
     ;;
 
 esac

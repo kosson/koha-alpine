@@ -25,9 +25,9 @@ write_db_client_configs() {
             "${DB_HOSTNAME}" "${KOHA_DB_ROOT_PASSWORD}"
         if [ "${KOHA_DB_USE_TLS:-}" = "yes" ]; then
             printf 'ssl      = on\n'
-            [ -n "${KOHA_DB_TLS_CA_CERTIFICATE:-}" ]     && printf 'ssl-ca   = %s\n' "${KOHA_DB_TLS_CA_CERTIFICATE}"
-            [ -n "${KOHA_DB_TLS_CLIENT_CERTIFICATE:-}" ] && printf 'ssl-cert = %s\n' "${KOHA_DB_TLS_CLIENT_CERTIFICATE}"
-            [ -n "${KOHA_DB_TLS_CLIENT_KEY:-}" ]         && printf 'ssl-key  = %s\n' "${KOHA_DB_TLS_CLIENT_KEY}"
+            [ -n "${KOHA_DB_TLS_CA_CERTIFICATE:-}" ]     && printf 'ssl-ca   = %s\n' "${KOHA_DB_TLS_CA_CERTIFICATE}" || true
+            [ -n "${KOHA_DB_TLS_CLIENT_CERTIFICATE:-}" ] && printf 'ssl-cert = %s\n' "${KOHA_DB_TLS_CLIENT_CERTIFICATE}" || true
+            [ -n "${KOHA_DB_TLS_CLIENT_KEY:-}" ]         && printf 'ssl-key  = %s\n' "${KOHA_DB_TLS_CLIENT_KEY}" || true
         else
             printf 'ssl      = off\nskip-ssl\n'
         fi
@@ -40,9 +40,9 @@ write_db_client_configs() {
             "${DB_HOSTNAME}" "${DB_USER}" "${DB_PASSWORD}"
         if [ "${KOHA_DB_USE_TLS:-}" = "yes" ]; then
             printf 'ssl      = on\n'
-            [ -n "${KOHA_DB_TLS_CA_CERTIFICATE:-}" ]     && printf 'ssl-ca   = %s\n' "${KOHA_DB_TLS_CA_CERTIFICATE}"
-            [ -n "${KOHA_DB_TLS_CLIENT_CERTIFICATE:-}" ] && printf 'ssl-cert = %s\n' "${KOHA_DB_TLS_CLIENT_CERTIFICATE}"
-            [ -n "${KOHA_DB_TLS_CLIENT_KEY:-}" ]         && printf 'ssl-key  = %s\n' "${KOHA_DB_TLS_CLIENT_KEY}"
+            [ -n "${KOHA_DB_TLS_CA_CERTIFICATE:-}" ]     && printf 'ssl-ca   = %s\n' "${KOHA_DB_TLS_CA_CERTIFICATE}" || true
+            [ -n "${KOHA_DB_TLS_CLIENT_CERTIFICATE:-}" ] && printf 'ssl-cert = %s\n' "${KOHA_DB_TLS_CLIENT_CERTIFICATE}" || true
+            [ -n "${KOHA_DB_TLS_CLIENT_KEY:-}" ]         && printf 'ssl-key  = %s\n' "${KOHA_DB_TLS_CLIENT_KEY}" || true
         else
             printf 'ssl      = off\nskip-ssl\n'
         fi

@@ -52,7 +52,7 @@ assert_not_contains "no cp_debian_files.pl fallback remains" "cp_debian_files.pl
 
 # --- Dockerfile checks ---
 assert_not_contains "koha source directory not copied into build context" "COPY koha /tmp/koha-build-src" "${DOCKERFILE}"
-assert_contains "prod-runtime stages assets from fetched git source" "RUN /usr/local/bin/build-alpine-package.sh /kohadevbox/koha" "${DOCKERFILE}"
+assert_contains "prod-runtime stages assets from fetched git source" "/usr/local/bin/build-alpine-package.sh /kohadevbox/koha" "${DOCKERFILE}"
 assert_contains "SKIP_RUNTIME_ASSET_COPY set in prod-runtime" "ENV SKIP_RUNTIME_ASSET_COPY=yes" "${DOCKERFILE}"
 
 echo ""

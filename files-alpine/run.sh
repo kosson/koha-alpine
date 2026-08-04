@@ -12,6 +12,10 @@ export BUILD_DIR=/kohadevbox
 export TEMP=/tmp
 export TZ=${TZ:-UTC}
 
+# Port defaults — these are set by docker-compose .env files but may be absent in bare docker run
+export KOHA_INTRANET_PORT=${KOHA_INTRANET_PORT:-8081}
+export KOHA_OPAC_PORT=${KOHA_OPAC_PORT:-8080}
+
 # Handy variables
 export KOHA_INTRANET_FQDN=${KOHA_INTRANET_PREFIX}${KOHA_INSTANCE}${KOHA_INTRANET_SUFFIX}${KOHA_DOMAIN}
 export KOHA_OPAC_FQDN=${KOHA_OPAC_PREFIX}${KOHA_INSTANCE}${KOHA_OPAC_SUFFIX}${KOHA_DOMAIN}
@@ -181,9 +185,9 @@ write_db_client_configs "${KOHA_INSTANCE}"
 
 # Get rid of Apache warnings
 if [ -f /etc/apache2/httpd.conf ]; then
-    append_if_absent "ServerName kohadevbox"        /etc/apache2/httpd.conf
-    append_if_absent "Listen ${KOHA_INTRANET_PORT}" /etc/apache2/httpd.conf
-    append_if_absent "Listen ${KOHA_OPAC_PORT}"     /etc/apache2/httpd.conf
+    append_if_absent "ServerName kohadevbox"                          /etc/apache2/httpd.conf
+    append_if_absent "Listen ${KOHA_INTRANET_PORT:-8081}" /etc/apache2/httpd.conf
+    append_if_absent "Listen ${KOHA_OPAC_PORT:-8080}"     /etc/apache2/httpd.conf
 fi
 
 # Pull the names of the environment variables to substitute from defaults.env and convert them to a string of the format "$VAR1:$VAR2:$VAR3", etc.
@@ -632,6 +636,23 @@ fi
 # Alpine's httpd.conf has mod_cgi LoadModule commented out by default
 echo "[alpine] Enabling mod_cgi module for Perl CGI script execution..."
 sed -i 's/^[[:space:]]*#LoadModule cgi_module modules\/mod_cgi\.so/LoadModule cgi_module modules\/mod_cgi.so/' /etc/apache2/httpd.conf 2>/dev/null || true
+
+# Alpine PERL5LIB fix: the Debian-installed apache-shared.conf hardcodes PERL5LIB to
+# /usr/share/koha/lib (the Debian package path), overriding the vhost's SetEnv which
+# correctly points to the git-checkout or bind-mount. Remove the conflicting SetEnv.
+sed -i '/^[[:space:]]*SetEnv PERL5LIB[[:space:]]/d' /etc/koha/apache-shared.conf 2>/dev/null || true
+
+# Alpine shared-conf path fix: apache-shared-intranet.conf and apache-shared-opac.conf
+# reference /usr/share/koha/* Debian package paths which don't exist here.
+# Rewrite DocumentRoot (must come from our vhost template) and all /usr/share/koha paths.
+sed -i "/^[[:space:]]*DocumentRoot[[:space:]]/d; \
+        s|/usr/share/koha/intranet/cgi-bin|${KOHA_PATH}|g; \
+        s|/usr/share/koha/api|${KOHA_PATH}/api|g" \
+    /etc/koha/apache-shared-intranet.conf 2>/dev/null || true
+sed -i "/^[[:space:]]*DocumentRoot[[:space:]]/d; \
+        s|/usr/share/koha/opac/cgi-bin/opac|${KOHA_PATH}/opac|g; \
+        s|/usr/share/koha/api|${KOHA_PATH}/api|g" \
+    /etc/koha/apache-shared-opac.conf 2>/dev/null || true
 
 # Stop apache2
 stop_apache_service

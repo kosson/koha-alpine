@@ -266,16 +266,20 @@ RUN if [ -f /etc/apache2/httpd.conf ]; then \
         sed -i 's/^#LoadModule cgid_module modules\/mod_cgid.so/LoadModule cgid_module modules\/mod_cgid.so/' /etc/apache2/httpd.conf; \
     fi
 
-# FIXME: The following should be adapted to . /lib/rc/sh/functions.sh and not mimic Debian's /lib/lsb/init-functions.  The current shim is a crude workaround to allow the Koha scripts to run without error.
+# LSB init stubs for Debian-origin koha-zebra/koha-indexer/koha-sip/koha-z3950-responder.
+# OpenRC's einfo helpers live in /lib/rc/sh/functions.sh, which is absent in minimal
+# Alpine container images.  We cannot source that file; these stubs are the correct
+# alternative.  log_end_msg MUST propagate its status argument — callers do
+# "(log_end_msg 1) || return 1" and rely on the exit code for error handling.
 RUN mkdir -p /lib/lsb
 RUN cat >/lib/lsb/init-functions <<'EOF'
 #!/bin/sh
-log_success_msg() { echo "$*"; }
-log_warning_msg() { echo "$*"; }
-log_failure_msg() { echo "$*"; }
-log_daemon_msg() { echo "$*"; }
-log_progress_msg() { echo "$*"; }
-log_end_msg() { return 0; }
+log_success_msg()  { echo "  [ OK ] $*"; }
+log_warning_msg()  { echo "  [WARN] $*"; }
+log_failure_msg()  { echo "  [FAIL] $*"; }
+log_daemon_msg()   { printf '  * %s\n' "$*"; }
+log_progress_msg() { printf '  %s\n' "$*"; }
+log_end_msg()      { [ "${1:-0}" -eq 0 ] && echo '  [ OK ]' || echo '  [FAIL]'; return "${1:-0}"; }
 EOF
 
 RUN chmod 0755 /lib/lsb/init-functions
@@ -358,16 +362,18 @@ VOLUME /kohadevbox/koha
 FROM koha-base AS prod-runtime
 
 ARG KOHA_GIT_URL=https://git.koha-community.org/Koha-community/Koha.git
-ARG KOHA_GIT_REF=v25.11.05-1
+# No default — must be supplied via --build-arg or docker-compose.prod.yml (sourced from env/.env KOHA_GIT_TAG)
+ARG KOHA_GIT_REF
 ARG KOHA_GIT_DEPTH=1
-ARG KOHA_VERSION=25.11.05-1
+ARG KOHA_VERSION
 
 LABEL org.opencontainers.image.title="koha-alpine-prod" \
       org.opencontainers.image.version="${KOHA_VERSION}" \
       org.opencontainers.image.source="${KOHA_GIT_URL}"
 
 # Bake a fixed Koha source tree in-image for production runs.
-RUN rm -rf /kohadevbox/koha \
+RUN test -n "${KOHA_GIT_REF}" || { echo "ERROR: KOHA_GIT_REF is required. Set KOHA_GIT_TAG in env/.env then run: ./stack-alpine.sh build --image-mode prod --build-koha" >&2; exit 1; } \
+    && rm -rf /kohadevbox/koha \
     && mkdir -p /kohadevbox/koha \
     && git -C /kohadevbox/koha init \
     && git -C /kohadevbox/koha remote add origin "${KOHA_GIT_URL}" \
@@ -390,7 +396,11 @@ RUN cd /kohadevbox/koha \
 RUN install -m 0755 /kohadevbox/files-alpine/scripts/koha-create /usr/sbin/koha-create \
     && install -m 0755 /kohadevbox/files-alpine/scripts/koha-plack /usr/sbin/koha-plack \
     && install -m 0755 /kohadevbox/files-alpine/scripts/koha-worker /usr/sbin/koha-worker \
-    && install -m 0755 /kohadevbox/files-alpine/scripts/koha-functions.sh /usr/sbin/koha-functions.sh
+    && install -m 0755 /kohadevbox/files-alpine/scripts/koha-functions.sh /usr/sbin/koha-functions.sh \
+    && sed -i '/^[[:space:]]*SetEnv PERL5LIB[[:space:]]/d' /etc/koha/apache-shared.conf 2>/dev/null || true \
+    && sed -i '/^[[:space:]]*DocumentRoot[[:space:]]/d; s|/usr/share/koha/intranet/cgi-bin|/kohadevbox/koha|g; s|/usr/share/koha/api|/kohadevbox/koha/api|g' /etc/koha/apache-shared-intranet.conf 2>/dev/null || true \
+    && sed -i '/^[[:space:]]*DocumentRoot[[:space:]]/d; s|/usr/share/koha/opac/cgi-bin/opac|/kohadevbox/koha/opac|g; s|/usr/share/koha/api|/kohadevbox/koha/api|g' /etc/koha/apache-shared-opac.conf 2>/dev/null || true
 
 ENV SKIP_RUNTIME_ASSET_COPY=yes
 ENV SKIP_YARN_INSTALL=yes
+ENV PERL5LIB=/kohadevbox/koha:/kohadevbox/koha/lib
