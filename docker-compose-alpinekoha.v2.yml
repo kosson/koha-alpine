@@ -1,0 +1,128 @@
+# v2 - FINAL - hardened compose with dev/prod targets + llama sidecar
+# Fixed: tmpfs collision, DAC_OVERRIDE, PERL5LIB with /opt/koha-perl
+
+services:
+  db:
+    image: mariadb:10.11
+    command:
+      - --ssl=ON
+      - --ssl-ca=/etc/mysql/ssl/ca-cert.pem
+      - --ssl-cert=/etc/mysql/ssl/server-cert.pem
+      - --ssl-key=/etc/mysql/ssl/server-key.pem
+      - --bind-address=0.0.0.0
+    volumes:
+      - ./files-alpine/mariadb-ssl:/etc/mysql/ssl:ro
+      - ./files-alpine/mariadb-ssl/mariadb-ssl.cnf:/etc/mysql/conf.d/zz-koha-ssl.cnf:ro
+      - koha-db-data:/var/lib/mysql
+    environment:
+      MARIADB_ROOT_PASSWORD: ${KOHA_DB_ROOT_PASSWORD}
+    networks: [knonikl]
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      retries: 5
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, SETGID, SETUID]
+
+  memcached:
+    image: memcached:1.6-alpine
+    networks: [knonikl]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    cap_add: [SETGID, SETUID]
+    read_only: true
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    networks: [knonikl]
+    volumes: [rabbitmq-data:/var/lib/rabbitmq]
+    security_opt: [no-new-privileges:true]
+
+  koha:
+    build:
+      context: .
+      dockerfile: Dockerfile-Alpine.v2
+      target: ${KOHA_TARGET:-dev}
+    image: ${KOHA_IMAGE:-kosson/koha-alpine:25.11.06-1}
+    depends_on:
+      db: {condition: service_healthy}
+      memcached: {condition: service_started}
+    volumes:
+      - ${SYNC_REPO:-./koha}:/kohadevbox/koha:rw
+      - ./files-alpine/templates:/kohadevbox/templates:ro
+      - ./env:/kohadevbox/env:ro
+      - ./files-alpine/git_hooks:/kohadevbox/git_hooks:ro
+      - ./files-alpine/misc4dev:/kohadevbox/misc4dev-alpine:ro
+      - koha_cache:/var/cache/koha
+      - koha_logs:/var/log/koha
+      - koha_lib:/var/lib/koha
+      - koha_var_run:/var/run/koha
+      - ./files-alpine/mariadb-ssl:/etc/mysql/ssl:ro
+    ports:
+      - "${KOHA_OPAC_PORT:-8080}:8080"
+      - "${KOHA_INTRANET_PORT:-8081}:8081"
+    env_file: [env/.env]
+    environment:
+      PERL5LIB: /opt/koha-perl/lib/perl5:/kohadevbox/koha/lib:/usr/local/lib/perl5/site_perl:/usr/local/share/perl5/site_perl:/usr/lib/perl5/vendor_perl:/usr/share/perl5/vendor_perl
+      PATH: /opt/koha-perl/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/kohadevbox/bin
+      PERL_LOCAL_LIB_ROOT: /opt/koha-perl
+      KOHA_TARGET: ${KOHA_TARGET:-dev}
+      KOHA_LLAMA_URL: ${KOHA_LLAMA_URL:-http://llama:8080}
+      SKIP_RUNTIME_ASSET_COPY: ${SKIP_RUNTIME_ASSET_COPY:-no}
+      KOHA_ALPINE_SKIP_YARN_INSTALL: ${KOHA_ALPINE_SKIP_YARN_INSTALL:-no}
+      KOHA_ALPINE_ENABLE_CROND: ${KOHA_ALPINE_ENABLE_CROND:-yes}
+      PERL_LWP_SSL_VERIFY_HOSTNAME: 1
+    networks: [knonikl, frontend]
+    read_only: false
+    tmpfs:
+      - /tmp:mode=1777
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID, NET_BIND_SERVICE]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8081/ | grep -qi koha || exit 1"]
+      interval: 30s
+      start_period: 140s
+      retries: 3
+
+  llama:
+    image: ghcr.io/ggml-org/llama.cpp:server--alpine
+    profiles: [llama]
+    volumes:
+      - ./models:/models:ro
+    command: >
+      --model /models/mistral-7b-instruct-v0.3-Q4_K_M.gguf
+      --host 0.0.0.0 --port 8080
+      --embedding --jinja
+      --threads 4 --ctx-size 4096
+    ports:
+      - "11434:8080"
+    networks: [knonikl]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETGID, SETUID]
+    read_only: true
+    tmpfs: [/tmp:mode=1777]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 15s
+      retries: 5
+    environment:
+      LLAMA_ARG_N_GPU_LAYERS: ${LLAMA_GPU_LAYERS:-0}
+
+volumes:
+  koha-db-data:
+  rabbitmq-data:
+  koha_cache:
+  koha_logs:
+  koha_lib:
+  koha_var_run:
+
+networks:
+  knonikl:
+    name: knonikl
+    external: true
+  frontend:
+    name: frontend
+    external: true

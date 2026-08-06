@@ -1,0 +1,57 @@
+# syntax=docker/dockerfile:1.6
+ARG ALPINE_VERSION=3.20
+ARG KOHA_USER=kohadev
+ARG KOHA_UID=1000
+ARG KOHA_GID=1000
+
+FROM alpine:${ALPINE_VERSION} AS base
+ARG KOHA_USER KOHA_UID KOHA_GID
+RUN addgroup -g ${KOHA_GID} ${KOHA_USER} && \
+    adduser -D -u ${KOHA_UID} -G ${KOHA_USER} -h /var/lib/koha/${KOHA_USER} -s /bin/sh ${KOHA_USER} && \
+    mkdir -p /etc/koha /var/lib/koha /var/log/koha /var/run/koha /var/cache/koha /kohadevbox /opt/koha-tmpl-built /etc/mysql/ssl /kohadevbox/lib /kohadevbox/templates && \
+    chown -R ${KOHA_USER}:${KOHA_USER} /var/lib/koha /var/log/koha /var/run/koha /var/cache/koha /kohadevbox /opt/koha-tmpl-built
+RUN apk add --no-cache perl perl-cgi perl-dbd-mysql perl-dbi apache2 apache2-utils mariadb-client openssl ca-certificates curl wget tzdata sudo bash gettext envsubst pwgen findutils
+
+FROM base AS builder
+RUN apk add --no-cache --virtual .build-deps build-base perl-dev linux-headers openssl-dev zlib-dev libxml2-dev libxslt-dev mariadb-dev expat-dev
+RUN curl -L https://cpanmin.us | perl - --self-upgrade
+RUN cpanm --notest --local-lib=/opt/koha-perl Modern::Perl Text::CSV_XS Email::Valid XML::LibXML XML::LibXSLT MARC::Record MARC::File::XML DBIx::Class Mojolicious JSON::Validator Crypt::SysRandom Crypt::JWT Lingua::Stem::Snowball CGI::Session Sereal YAML::XS JSON Cache::Memcached Moo DateTime Net::SSLeay Crypt::SSLeay LWP::Protocol::https && rm -rf /root/.cpanm
+
+FROM node:22-alpine AS node-builder
+WORKDIR /tmp/build
+COPY . /tmp/context/
+RUN if [ -f /tmp/context/koha/package.json ]; then cp -r /tmp/context/koha /kohadevbox/koha && cd /kohadevbox/koha && yarn install --frozen-lockfile || npm install; yarn build || npm run build || true; mkdir -p /opt/koha-tmpl-built && cp -r /kohadevbox/koha/koha-tmpl/* /opt/koha-tmpl-built/ 2>/dev/null || true; else mkdir -p /opt/koha-tmpl-built && echo "/* placeholder */" > /opt/koha-tmpl-built/placeholder.css; fi
+
+FROM base AS prod-runtime
+ARG KOHA_USER
+COPY --from=builder /opt/koha-perl /opt/koha-perl
+COPY --from=node-builder /opt/koha-tmpl-built /opt/koha-tmpl-built
+ENV PERL5LIB=/opt/koha-perl/lib/perl5:/kohadevbox/koha/lib:/usr/local/lib/perl5/site_perl:/usr/local/share/perl5/site_perl
+ENV PERL_LOCAL_LIB_ROOT=/opt/koha-perl
+ENV PATH=/opt/koha-perl/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/kohadevbox/bin
+COPY files-alpine/ /build/files-alpine/
+RUN set -eux; \
+    cp /build/files-alpine/run.sh /usr/local/bin/run.sh; \
+    mkdir -p /usr/local/lib /kohadevbox/lib /etc/mysql/ssl /usr/local/bin /usr/sbin /kohadevbox/templates /var/lib/koha/kohadev; \
+    cp /build/files-alpine/lib/run-sh-alpine.sh /usr/local/lib/run-sh-alpine.sh; \
+    cp /build/files-alpine/lib/run-sh-alpine.sh /kohadevbox/lib/run-sh-alpine.sh; \
+    cp /build/files-alpine/scripts/* /usr/local/bin/ 2>/dev/null || true; \
+    cp /build/files-alpine/scripts/* /usr/sbin/ 2>/dev/null || true; \
+    cp /build/files-alpine/scripts/koha-create /opt/alpine-koha-create 2>/dev/null || true; \
+    if [ -f /build/files-alpine/build-alpine-package.sh ]; then cp /build/files-alpine/build-alpine-package.sh /usr/local/bin/build-alpine-package.sh; else printf '#!/bin/sh\necho "[build-alpine-package.sh] stub"\n' > /usr/local/bin/build-alpine-package.sh; fi; \
+    if [ -d /build/files-alpine/templates ]; then cp -r /build/files-alpine/templates/* /kohadevbox/templates/ 2>/dev/null || true; fi; \
+    if [ -d /build/files-alpine/mariadb-ssl ]; then cp -r /build/files-alpine/mariadb-ssl/* /etc/mysql/ssl/ 2>/dev/null || true; fi; \
+    cp /build/files-alpine/templates/defaults.env /kohadevbox/templates/defaults.env 2>/dev/null || cp /build/files-alpine/../env/defaults.env /kohadevbox/templates/defaults.env 2>/dev/null || true; \
+    chmod 0555 /usr/local/bin/run.sh /usr/local/bin/build-alpine-package.sh /usr/local/lib/run-sh-alpine.sh /kohadevbox/lib/run-sh-alpine.sh 2>/dev/null || true; \
+    chmod 0755 /usr/local/bin/koha-* /usr/sbin/koha-* 2>/dev/null || true; \
+    printf '#!/bin/sh\nname="$1"\nuser="${name}-koha"\nmkdir -p /etc/koha/sites/$name /var/lib/koha/$name /var/cache/koha/$name /var/log/koha/$name /var/run/koha/$name /var/lock/koha/$name\nchown -R $user:$user /var/lib/koha/$name /var/cache/koha/$name /var/log/koha/$name /var/run/koha/$name 2>/dev/null || true\n' > /usr/local/bin/koha-create-dirs-alpine && chmod +x /usr/local/bin/koha-create-dirs-alpine && cp /usr/local/bin/koha-create-dirs-alpine /usr/sbin/koha-create-dirs && cp /usr/local/bin/koha-create-dirs-alpine /usr/local/bin/koha-create-dirs
+USER root
+WORKDIR /kohadevbox
+HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 CMD wget -qO- http://127.0.0.1:8081/ | grep -qi koha || exit 1
+ENTRYPOINT ["/usr/local/bin/run.sh"]
+FROM prod-runtime AS dev
+USER root
+RUN apk add --no-cache git htop curl wget vim less bash nodejs yarn openldap-clients socat memcached zsh mariadb-connector-c-dev
+RUN echo "${KOHA_USER} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/koha-dev && chmod 440 /etc/sudoers.d/koha-dev
+ENV DEV_MODE=1 KOHA_ALPINE_SKIP_YARN_INSTALL=no
+HEALTHCHECK NONE
