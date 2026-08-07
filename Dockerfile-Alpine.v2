@@ -1,4 +1,4 @@
-# Dockerfile-Alpine.v2 - FINAL V3 with Alpine-native plack
+# Dockerfile-Alpine.v2 - FINAL v6 with YAZ from source + ZOOM
 FROM docker.io/library/node:22-alpine AS node-builder
 WORKDIR /tmp/build
 COPY . /tmp/context/
@@ -12,15 +12,30 @@ RUN if [ -f /tmp/context/koha/package.json ]; then \
 
 FROM docker.io/library/alpine:3.20 AS base
 RUN addgroup -g 1000 kohadev && adduser -D -u 1000 -G kohadev -h /var/lib/koha/kohadev -s /bin/sh kohadev && \
-    addgroup kohadev-koha 2>/dev/null || addgroup -g 1001 kohadev-koha; \
-    adduser -D -G kohadev-koha kohadev-koha 2>/dev/null || adduser -D -u 1001 -G kohadev-koha kohadev-koha 2>/dev/null || true; \
-    mkdir -p /etc/koha /var/lib/koha /var/log/koha /var/run/koha /var/cache/koha /kohadevbox /opt/koha-tmpl-built /etc/apache2/sites-available /etc/apache2/sites-enabled /usr/local/lib /kohadevbox/lib /kohadevbox/templates /var/lib/koha/kohadev /usr/share/koha/bin /lib/lsb /etc/koha/sites
-RUN apk add --no-cache perl perl-cgi perl-dbd-mysql perl-dbi apache2 apache2-utils mariadb-client openssl ca-certificates curl wget tzdata sudo bash gettext envsubst pwgen findutils perl-app-cpanminus apache2-proxy iproute2 net-tools procps yaml-dev libxml2 libxslt xmlstarlet openrc
+    addgroup -g 1001 kohadev-koha 2>/dev/null || addgroup kohadev-koha; \
+    adduser -D -G kohadev-koha kohadev-koha 2>/dev/null || true; \
+    mkdir -p /etc/koha /var/lib/koha /var/log/koha /var/run/koha /var/cache/koha /kohadevbox /opt/koha-tmpl-built /etc/mysql/ssl /etc/apache2/sites-available /etc/apache2/sites-enabled /usr/local/lib /kohadevbox/lib /kohadevbox/templates /var/lib/koha/kohadev /usr/share/koha/bin /lib/lsb /etc/koha/sites
+RUN apk add --no-cache perl perl-cgi perl-dbd-mysql perl-dbi apache2 apache2-utils mariadb-client openssl ca-certificates curl wget tzdata sudo bash gettext envsubst pwgen findutils perl-app-cpanminus apache2-proxy iproute2 net-tools procps yaml-dev libxml2 libxslt xmlstarlet openrc libxml2-dev libxslt-dev icu-dev libxslt
+
+# Build and install YAZ (Z39.50/SRU toolkit) from source on Alpine musl - from your main branch
+ENV YAZ_VERSION=5.37.3
+RUN apk add --no-cache --virtual .yaz-build-deps build-base libxslt-dev libxml2-dev openssl-dev zlib-dev icu-dev readline-dev libedit-dev \
+    && wget https://ftp.indexdata.com/pub/yaz/yaz-${YAZ_VERSION}.tar.gz -O /tmp/yaz.tar.gz \
+    && tar -xzf /tmp/yaz.tar.gz -C /tmp \
+    && cd /tmp/yaz-${YAZ_VERSION} \
+    && CFLAGS="-std=gnu17 -Wno-error=implicit-function-declaration -D_GNU_SOURCE" ./configure --prefix=/usr --sysconfdir=/etc \
+    && make -j$(nproc) \
+    && make install \
+    && cd / \
+    && rm -rf /tmp/yaz* \
+    && apk del .yaz-build-deps \
+    && apk add --no-cache libxslt libxml2 icu-libs readline libedit
 
 FROM base AS builder
-RUN apk add --no-cache --virtual .build-deps build-base perl-dev linux-headers openssl-dev zlib-dev expat-dev mariadb-dev libxml2-dev libxslt-dev
+RUN apk add --no-cache --virtual .build-deps build-base perl-dev linux-headers openssl-dev zlib-dev expat-dev mariadb-dev libxml2-dev libxslt-dev icu-dev
 RUN curl -L https://cpanmin.us | perl - --self-upgrade
-RUN cpanm --notest --local-lib=/opt/koha-perl Modern::Perl Text::CSV_XS Email::Valid XML::LibXML XML::LibXSLT MARC::Record MARC::File::XML DBIx::Class Mojolicious JSON::Validator Crypt::SysRandom Crypt::JWT Lingua::Stem::Snowball Template LWP::UserAgent Plack Plack::Middleware::ReverseProxy Starman Gazelle Server::Starter Net::Server::SS::PreFork Parallel::Prefork Daemon::Control YAML::XS CGI::Emulate::PSGI CGI::Compile Starlet Net::CIDR Locale::PO DateTime::Format::MySQL
+# Added Net::Z3950::ZOOM which now links against /usr built YAZ
+RUN cpanm --notest --local-lib=/opt/koha-perl Modern::Perl Text::CSV_XS Email::Valid XML::LibXML XML::LibXSLT MARC::Record MARC::File::XML DBIx::Class Mojolicious JSON::Validator Crypt::SysRandom Crypt::JWT Lingua::Stem::Snowball Template LWP::UserAgent Plack Plack::Middleware::ReverseProxy Starman Gazelle Server::Starter Net::Server::SS::PreFork Parallel::Prefork Daemon::Control YAML::XS CGI::Emulate::PSGI CGI::Compile Starlet Net::CIDR Locale::PO DateTime::Format::MySQL Net::Z3950::ZOOM ZOOM Biblio::EndnoteStyle MARC::Charset MARC::File::USMARC
 
 FROM base AS prod-runtime
 COPY --from=builder /opt/koha-perl /opt/koha-perl
@@ -31,18 +46,23 @@ COPY koha/ /kohadevbox/koha/
 RUN set -eux; \
     cp /build/files-alpine/run.sh /usr/local/bin/run.sh; \
     mkdir -p /usr/sbin /usr/local/bin /usr/share/koha/bin /kohadevbox/lib /etc/koha /kohadevbox/templates /var/log/koha/kohadev /var/run/koha /var/cache/koha /lib/lsb; \
-    printf '#!/bin/sh\nlog_daemon_msg(){ echo "$2"; }\nlog_end_msg(){ return ${1:-0}; }\nlog_progress_msg(){ echo -n "$@"; }\nlog_warning_msg(){ echo "WARNING: $@" >&2; }\nlog_failure_msg(){ echo "FAIL: $@" >&2; }\nlog_success_msg(){ echo "$@"; }\n' > /lib/lsb/init-functions; chmod +x /lib/lsb/init-functions; \
+    printf '#!/bin/sh\nlog_daemon_msg(){ echo "$2"; }\nlog_end_msg(){ return ${1:-0}; }\nlog_progress_msg(){ echo -n "$@"; }\nlog_warning_msg(){ echo "WARN $@" >&2; }\nlog_failure_msg(){ echo "FAIL $@" >&2; }\nlog_success_msg(){ echo "$@"; }\n' > /lib/lsb/init-functions; chmod +x /lib/lsb/init-functions; \
     printf '#!/bin/sh\necho "Server version: Apache/2.4.58 (Alpine)"\necho "Syntax OK"\nexit 0\n' > /usr/sbin/apache2ctl; chmod +x /usr/sbin/apache2ctl; \
     printf '#!/bin/sh\nexit 0\n' > /usr/sbin/a2enmod; chmod +x /usr/sbin/a2enmod; \
     printf '#!/bin/sh\nexit 0\n' > /usr/sbin/a2dismod; chmod +x /usr/sbin/a2dismod; \
     cp /build/files-alpine/scripts/koha-create /opt/alpine-koha-create; \
     cp /build/files-alpine/scripts/koha-create /usr/sbin/koha-create; \
     cp /build/files-alpine/scripts/koha-create /usr/local/bin/koha-create; \
+    cp /build/files-alpine/scripts/koha-plack /usr/sbin/koha-plack; \
+    cp /build/files-alpine/scripts/koha-plack /usr/local/bin/koha-plack; \
+    cp /build/files-alpine/scripts/koha-worker /usr/sbin/koha-worker; \
+    cp /build/files-alpine/scripts/koha-worker /usr/local/bin/koha-worker; \
     cp /build/files-alpine/lib/* /kohadevbox/lib/ 2>/dev/null || true; \
     cp -r /build/files-alpine/templates/* /kohadevbox/templates/ 2>/dev/null || true; \
     cp -r /build/files-alpine/templates/* /etc/koha/ 2>/dev/null || true; \
     chmod +x /usr/sbin/koha-* /usr/local/bin/koha-* /usr/local/bin/run.sh /kohadevbox/lib/*.sh 2>/dev/null || true; \
-    echo "prod-runtime plack image v3 built"
+    /opt/koha-perl/bin/perl -MZOOM -e 'print "ZOOM OK $ZOOM::VERSION\n"' && /opt/koha-perl/bin/perl -MStarman -e 'print "Starman OK\n"' && yaz-config --version; \
+    echo "prod-runtime v6 YAZ ${YAZ_VERSION} + ZOOM built"
 
 ENV PERL5LIB=/opt/koha-perl/lib/perl5:/kohadevbox/koha/lib:/kohadevbox/koha
 ENV PATH=/opt/koha-perl/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin

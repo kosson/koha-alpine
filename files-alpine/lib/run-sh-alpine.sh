@@ -1,10 +1,9 @@
 #!/bin/bash
-# lib/run-sh-alpine.sh - v2026-08-07-final-v2 - Alpine-native plack
+# lib/run-sh-alpine.sh - FINAL v5 integrated
 set -e
 
 ensure_alpine_compat() {
     mkdir -p /lib/lsb /usr/sbin /usr/share/koha/bin /etc/koha/sites /var/run/koha /var/log/koha /var/cache/koha /usr/local/bin
-
     cat > /lib/lsb/init-functions <<'LSB'
 #!/bin/sh
 log_daemon_msg() { echo "$2"; }
@@ -15,75 +14,12 @@ log_failure_msg() { echo "FAIL $@" >&2; }
 log_success_msg() { echo "$@"; }
 LSB
     chmod +x /lib/lsb/init-functions
-
-    printf '#!/bin/sh\necho "Server version: Apache/2.4.58 (Alpine)"\n echo "Syntax OK"\nexit 0\n' > /usr/sbin/apache2ctl
-    chmod +x /usr/sbin/apache2ctl
-    printf '#!/bin/sh\nexit 0\n' > /usr/sbin/a2enmod
-    printf '#!/bin/sh\nexit 0\n' > /usr/sbin/a2dismod
-    chmod +x /usr/sbin/a2enmod /usr/sbin/a2dismod
-
-    # Wrapper for start-stop-daemon to support --status
-    if [ ! -f /sbin/start-stop-daemon.real ]; then
-        mv /sbin/start-stop-daemon /sbin/start-stop-daemon.real 2>/dev/null || cp /usr/sbin/start-stop-daemon /sbin/start-stop-daemon.real 2>/dev/null || true
-    fi
-    cat > /sbin/start-stop-daemon <<'SSD'
-#!/bin/sh
-REAL="/sbin/start-stop-daemon.real"
-[ -x "$REAL" ] || REAL="/usr/sbin/start-stop-daemon.real"
-[ -x "$REAL" ] || REAL="/sbin/start-stop-daemon.bak"
-# Handle --status
-for arg in "$@"; do
-  if [ "$arg" = "--status" ]; then
-    # Parse pidfile
-    PIDFILE=""
-    prev=""
-    for a in "$@"; do
-      if [ "$prev" = "--pidfile" ] || [ "$prev" = "-p" ]; then PIDFILE="$a"; fi
-      prev="$a"
-    done
-    if [ -n "$PIDFILE" ] && [ -f "$PIDFILE" ]; then
-      pid=$(cat "$PIDFILE" 2>/dev/null || true)
-      if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then exit 0; else exit 1; fi
-    else
-      exit 3
-    fi
-  fi
-done
-# For --stop, try real, but also kill by pidfile
-exec "$REAL" "$@" 2>/dev/null || {
-  # fallback: parse pidfile and kill
-  PIDFILE=""
-  prev=""
-  for a in "$@"; do
-    if [ "$prev" = "--pidfile" ]; then PIDFILE="$a"; fi
-    prev="$a"
-  done
-  if echo "$@" | grep -q "\-\-stop"; then
-    [ -n "$PIDFILE" ] && [ -f "$PIDFILE" ] && kill $(cat "$PIDFILE") 2>/dev/null || true
-    exit 0
-  fi
-  exit 0
-}
-SSD
-    chmod +x /sbin/start-stop-daemon
-    cp /sbin/start-stop-daemon /usr/sbin/start-stop-daemon 2>/dev/null || true
-
-    if ! getent group kohadev-koha >/dev/null 2>&1; then addgroup kohadev-koha 2>/dev/null || true; fi
-    if ! id kohadev-koha >/dev/null 2>&1; then adduser -D -G kohadev-koha kohadev-koha 2>/dev/null || true; fi
-    if ! id kohadev >/dev/null 2>&1; then addgroup -g 1000 kohadev 2>/dev/null || true; adduser -D -u 1000 -G kohadev kohadev 2>/dev/null || true; fi
-
-    if [ -f /kohadevbox/koha/debian/scripts/koha-functions.sh ]; then
-        cp /kohadevbox/koha/debian/scripts/koha-functions.sh /tmp/real.sh
-        sed -i -e "/exec 3>&1/d" -e "/exec 3>&-/d" -e "/exec 3>/d" -e "s/>&3/>\&1/g" /tmp/real.sh
-        # Patch apache version check to always succeed
-        sed -i -e "s/check_apache_version.*/check_apache_version() { return 0; }/" -e "s/check_apache_modules.*/check_apache_modules() { return 0; }/" /tmp/real.sh 2>/dev/null || true
-        cp /tmp/real.sh /usr/share/koha/bin/koha-functions.sh
-        cp /tmp/real.sh /usr/sbin/koha-functions.sh
-        chmod +x /usr/share/koha/bin/koha-functions.sh /usr/sbin/koha-functions.sh
-    fi
-    echo "#!/bin/sh" > /usr/local/bin/koha-functions.sh
-    echo ". /usr/share/koha/bin/koha-functions.sh" >> /usr/local/bin/koha-functions.sh
-    chmod +x /usr/local/bin/koha-functions.sh
+    printf '#!/bin/sh\necho "Server version: Apache/2.4.58 (Alpine)"\necho "Syntax OK"\nexit 0\n' > /usr/sbin/apache2ctl; chmod +x /usr/sbin/apache2ctl
+    printf '#!/bin/sh\nexit 0\n' > /usr/sbin/a2enmod; chmod +x /usr/sbin/a2enmod
+    printf '#!/bin/sh\nexit 0\n' > /usr/sbin/a2dismod; chmod +x /usr/sbin/a2dismod
+    getent group kohadev-koha >/dev/null 2>&1 || addgroup kohadev-koha 2>/dev/null || true
+    id kohadev-koha >/dev/null 2>&1 || adduser -D -G kohadev-koha kohadev-koha 2>/dev/null || true
+    id kohadev >/dev/null 2>&1 || { addgroup -g 1000 kohadev 2>/dev/null || true; adduser -D -u 1000 -G kohadev kohadev 2>/dev/null || true; }
 }
 
 ensure_runtime_dirs() {
@@ -98,42 +34,24 @@ ensure_runtime_dirs() {
 
 copy_runtime_files() {
     echo "[copy_runtime_files] Installing Koha scripts"
-    # Install Alpine-native plack/worker as primary
     if [ -f /build/files-alpine/scripts/koha-plack ]; then
         cp /build/files-alpine/scripts/koha-plack /usr/sbin/koha-plack
         cp /build/files-alpine/scripts/koha-plack /usr/local/bin/koha-plack
-        cp /build/files-alpine/scripts/koha-plack /usr/share/koha/bin/koha-plack
-        chmod +x /usr/sbin/koha-plack /usr/local/bin/koha-plack /usr/share/koha/bin/koha-plack
+        chmod +x /usr/sbin/koha-plack /usr/local/bin/koha-plack
         echo "[copy_runtime_files] Installed Alpine-native koha-plack"
     fi
     if [ -f /build/files-alpine/scripts/koha-worker ]; then
         cp /build/files-alpine/scripts/koha-worker /usr/sbin/koha-worker
         cp /build/files-alpine/scripts/koha-worker /usr/local/bin/koha-worker
-        cp /build/files-alpine/scripts/koha-worker /usr/share/koha/bin/koha-worker
-        chmod +x /usr/sbin/koha-worker /usr/local/bin/koha-worker /usr/share/koha/bin/koha-worker
+        chmod +x /usr/sbin/koha-worker /usr/local/bin/koha-worker
         echo "[copy_runtime_files] Installed Alpine-native koha-worker"
     fi
-
-    # Install remaining Debian scripts patched
-    if [ -d "/kohadevbox/koha/debian/scripts" ]; then
-        for s in koha-indexer koha-list koha-disable koha-enable; do
-            if [ -f "/kohadevbox/koha/debian/scripts/${s}" ]; then
-                cp "/kohadevbox/koha/debian/scripts/${s}" "/usr/sbin/${s}" 2>/dev/null || true
-                cp "/kohadevbox/koha/debian/scripts/${s}" "/usr/local/bin/${s}" 2>/dev/null || true
-                sed -i -e "/exec 3>&1/d" -e "/exec 3>&-/d" -e "/exec 3>/d" -e "s/>&3/>\&1/g" "/usr/sbin/${s}" "/usr/local/bin/${s}" 2>/dev/null || true
-                chmod +x "/usr/sbin/${s}" "/usr/local/bin/${s}" 2>/dev/null || true
-            fi
-        done
-    fi
-
     if [ -f "/opt/alpine-koha-create" ]; then
         cp /opt/alpine-koha-create /usr/sbin/koha-create
         cp /opt/alpine-koha-create /usr/local/bin/koha-create
         chmod +x /usr/sbin/koha-create /usr/local/bin/koha-create
     fi
-
     ensure_alpine_compat
-
     if [ -d "/build/files-alpine/templates" ] && [ "${KOHA_ALPINE_SKIP_RUNTIME_COPY:-no}" != "yes" ]; then
         cp -r /build/files-alpine/templates/* /kohadevbox/templates/ 2>/dev/null || true
     fi
@@ -148,7 +66,6 @@ copy_runtime_files() {
 render_vhost() {
     local instance="${1:-kohadev}"
     local koha_path="${KOHA_PATH:-/kohadevbox/koha}"
-    echo "[render_vhost] KOHA_PATH=${koha_path}"
     local template_file="/kohadevbox/templates/kohadev.conf.in"
     [ -f "$template_file" ] || template_file="/build/files-alpine/templates/kohadev.conf.in"
     local dest="/etc/apache2/sites-available/${instance}.conf"
@@ -180,8 +97,8 @@ run_service_watchdog() {
     echo "[watchdog] Service watchdog started (instance=${instance})"
     trap 'koha-plack --stop "'"${instance}"'" 2>/dev/null || true; koha-worker --stop "'"${instance}"'" 2>/dev/null || true; httpd -k stop 2>/dev/null || true; exit 0' TERM INT
     while true; do
-        koha-plack --status "${instance}" >/dev/null 2>&1 || { echo "[watchdog] koha-plack down, restarting..."; koha-plack --start "${instance}" 2>/dev/null || true; }
-        koha-worker --status "${instance}" >/dev/null 2>&1 || { echo "[watchdog] koha-worker down, restarting..."; koha-worker --start "${instance}" 2>/dev/null || true; }
+        koha-plack --status "${instance}" >/dev/null 2>&1 || { echo "[watchdog] plack down, restarting..."; koha-plack --start "${instance}" 2>/dev/null || true; }
+        koha-worker --status "${instance}" >/dev/null 2>&1 || { echo "[watchdog] worker down, restarting..."; koha-worker --start "${instance}" 2>/dev/null || true; }
         sleep "${interval}" & wait $! || true
     done
 }
