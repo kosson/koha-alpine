@@ -1,10 +1,4 @@
-# Dockerfile-Alpine.v2 - prod fix final
-# Base: alpine:3.20 with perl + apache + modern-perl deps
-# Targets: base, builder, prod-runtime
-
-ARG KOHA_VERSION=25.11.06
-
-# --- node builder for JS assets ---
+# Dockerfile-Alpine.v2 - prod fix final with ENTRYPOINT
 FROM docker.io/library/node:22-alpine AS node-builder
 WORKDIR /tmp/build
 COPY . /tmp/context/
@@ -18,37 +12,39 @@ RUN if [ -f /tmp/context/koha/package.json ]; then \
       mkdir -p /opt/koha-tmpl-built; \
     fi
 
-# --- base runtime ---
 FROM docker.io/library/alpine:3.20 AS base
 RUN addgroup -g 1000 kohadev && \
     adduser -D -u 1000 -G kohadev -h /var/lib/koha/kohadev -s /bin/sh kohadev && \
     mkdir -p /etc/koha /var/lib/koha /var/log/koha /var/run/koha /var/cache/koha /kohadevbox /opt/koha-tmpl-built /etc/mysql/ssl /etc/apache2/sites-available /etc/apache2/sites-enabled /usr/local/lib /kohadevbox/lib /kohadevbox/templates /var/lib/koha/kohadev
-RUN apk add --no-cache perl perl-cgi perl-dbd-mysql perl-dbi apache2 apache2-utils mariadb-client openssl ca-certificates curl wget tzdata sudo bash gettext envsubst pwgen findutils perl-app-cpanminus apache2-proxy
+RUN apk add --no-cache perl perl-cgi perl-dbd-mysql perl-dbi apache2 apache2-utils mariadb-client openssl ca-certificates curl wget tzdata sudo bash gettext envsubst pwgen findutils perl-app-cpanminus apache2-proxy iproute2 net-tools procps
 
-# --- builder for CPAN deps ---
 FROM base AS builder
 RUN apk add --no-cache --virtual .build-deps build-base perl-dev linux-headers openssl-dev zlib-dev libxml2-dev libxslt-dev mariadb-dev expat-dev
 RUN curl -L https://cpanmin.us | perl - --self-upgrade
-RUN cpanm --notest --local-lib=/opt/koha-perl Modern::Perl Text::CSV_XS Email::Valid XML::LibXML XML::LibXSLT MARC::Record MARC::File::XML DBIx::Class Mojolicious JSON::Validator Crypt::SysRandom Crypt::JWT Lingua::Stem::Snowball
+RUN cpanm --notest --local-lib=/opt/koha-perl Modern::Perl Text::CSV_XS Email::Valid XML::LibXML XML::LibXSLT MARC::Record MARC::File::XML DBIx::Class Mojolicious JSON::Validator Crypt::SysRandom Crypt::JWT Lingua::Stem::Snowball Template LWP::UserAgent
 
-# --- prod-runtime - NO node, NO git, prebuilt assets ---
 FROM base AS prod-runtime
 COPY --from=builder /opt/koha-perl /opt/koha-perl
 COPY --from=node-builder /opt/koha-tmpl-built /opt/koha-tmpl-built
 COPY files-alpine/ /build/files-alpine/
 
-# CRITICAL: copy final fixed scripts, not old cached ones
 RUN set -eux; \
     cp /build/files-alpine/run.sh /usr/local/bin/run.sh; \
     cp /build/files-alpine/scripts/koha-create /opt/alpine-koha-create; \
     cp /build/files-alpine/scripts/koha-create /usr/local/bin/koha-create; \
     cp /build/files-alpine/scripts/koha-create /usr/sbin/koha-create; \
     chmod +x /opt/alpine-koha-create /usr/local/bin/koha-create /usr/sbin/koha-create /usr/local/bin/run.sh; \
-    mkdir -p /usr/local/lib /kohadevbox/lib /etc/mysql/ssl /usr/local/bin /usr/sbin /kohadevbox/templates /var/lib/koha/kohadev /etc/apache2/sites-available /etc/apache2/sites-enabled; \
+    mkdir -p /usr/local/lib /kohadevbox/lib /etc/mysql/ssl /usr/local/bin /usr/sbin /kohadevbox/templates /var/lib/koha/kohadev /etc/apache2/sites-available /etc/apache2/sites-enabled /var/log/koha/kohadev /var/run/koha; \
     cp /build/files-alpine/lib/* /kohadevbox/lib/ 2>/dev/null || true; \
     cp -r /build/files-alpine/templates/* /kohadevbox/templates/ 2>/dev/null || true; \
     cp -r /build/files-alpine/templates/* /etc/koha/ 2>/dev/null || true; \
     chmod +x /kohadevbox/lib/*.sh 2>/dev/null || true; \
-    echo "prod-runtime image built with KOHA_PATH fix and fd3-safe koha-create"
+    echo "prod-runtime image built with ENTRYPOINT fix"
+
+ENV PERL5LIB=/opt/koha-perl/lib/perl5:/kohadevbox/koha/lib
+ENV PATH=/opt/koha-perl/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ENV KOHA_PATH=/kohadevbox/koha
+ENV BUILD_DIR=/kohadevbox
 
 WORKDIR /kohadevbox
+ENTRYPOINT ["/bin/bash", "/usr/local/bin/run.sh"]
