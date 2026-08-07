@@ -2,6 +2,19 @@
 # Alpine compatibility helpers for files-alpine/run.sh.
 # v2 hardened - prod prebuilt assets, security hardening, llama probe
 # Patched v2026-08-06 final - fixes koha-common, koha-functions.sh, perms
+if [ "${KOHA_TARGET}" = "prod-runtime" ]; then
+  KOHA_ALPINE_SKIP_YARN_INSTALL=yes
+  KOHA_ALPINE_SKIP_GIT_SETUP=yes
+  KOHA_ALPINE_SKIP_L10N=yes
+  KOHA_ALPINE_SKIP_ELASTICSEARCH_WAIT=yes
+  SKIP_RUNTIME_ASSET_COPY=yes
+  export KOHA_ALPINE_SKIP_YARN_INSTALL SKIP_RUNTIME_ASSET_COPY KOHA_ALPINE_SKIP_ELASTICSEARCH_WAIT KOHA_ALPINE_SKIP_GIT_SETUP KOHA_ALPINE_SKIP_L10N
+fi
+# prod skips
+[ "${KOHA_ALPINE_SKIP_GIT_SETUP:-no}" = "yes" ] && git_setup() { echo "[git] Skipped (prod)"; return 0; }
+[ "${KOHA_ALPINE_SKIP_YARN_INSTALL:-no}" = "yes" ] && yarn_install() { echo "[yarn] Skipped (prod)"; return 0; }
+[ "${KOHA_ALPINE_SKIP_L10N:-no}" = "yes" ] && handle_l10n() { echo " Skipped (prod)"; return 0; }
+[ "${KOHA_ALPINE_SKIP_ELASTICSEARCH_WAIT:-no}" = "yes" ] && wait_for_elasticsearch() { echo "[elasticsearch] Skipped (prod) -> $ELASTICSEARCH_SERVER"; return 0; }
 
 append_if_absent()
 {

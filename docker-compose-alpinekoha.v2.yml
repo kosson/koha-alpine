@@ -51,6 +51,7 @@ services:
     volumes:
       - ${SYNC_REPO:-./koha}:/kohadevbox/koha:rw
       - ./files-alpine/templates:/kohadevbox/templates:ro
+      - ./files-alpine/lib:/kohadevbox/lib:ro
       - ./env:/kohadevbox/env:ro
       - ./files-alpine/git_hooks:/kohadevbox/git_hooks:ro
       - ./files-alpine/misc4dev:/kohadevbox/misc4dev-alpine:ro
@@ -67,7 +68,7 @@ services:
     env_file: [env/.env]
     environment:
       SEARCH_ENGINE: "Elasticsearch"
-      ELASTICSEARCH_SERVER: "host.docker.internal:9200"   
+      ELASTICSEARCH_SERVER: "os01:9200"
       PERL5LIB: /opt/koha-perl/lib/perl5:/kohadevbox/koha/lib:/usr/local/lib/perl5/site_perl:/usr/local/share/perl5/site_perl:/usr/lib/perl5/vendor_perl:/usr/share/perl5/vendor_perl
       PATH: /opt/koha-perl/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/kohadevbox/bin
       PERL_LOCAL_LIB_ROOT: /opt/koha-perl
