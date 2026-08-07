@@ -1,80 +1,77 @@
 services:
   db:
-    image: ${DB_IMAGE:-mariadb:10.11}
-    container_name: koha-alpine-db-1
+    image: mariadb:10.11
     environment:
-      MYSQL_ROOT_PASSWORD: ${KOHA_DB_ROOT_PASSWORD}
-      MARIADB_ROOT_PASSWORD: ${KOHA_DB_ROOT_PASSWORD}
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_DATABASE: koha_kohadev
+      MYSQL_USER: koha_kohadev
+      MYSQL_PASSWORD: password
     volumes:
       - db_data:/var/lib/mysql
-    networks:
-      - internal
     healthcheck:
-      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   memcached:
     image: memcached:alpine
-    networks:
-      - internal
+    command: ["-m", "64"]
 
   rabbitmq:
     image: rabbitmq:3-management-alpine
-    networks:
-      - internal
 
   koha:
-    image: ${KOHA_IMAGE:-kosson/koha-alpine:25.11.06-1-prod}
     build:
       context: .
       dockerfile: Dockerfile-Alpine.v2
-      target: ${KOHA_TARGET:-prod-runtime}
+      target: prod-runtime
+    image: kosson/koha-alpine:25.11.06-1-prod
     depends_on:
       db:
         condition: service_healthy
-    env_file:
-      - env/.env
+      memcached:
+        condition: service_started
+      rabbitmq:
+        condition: service_started
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+      - "5000:5000"
+      - "5001:5001"
     environment:
-      KOHA_TARGET: ${KOHA_TARGET:-prod-runtime}
+      KOHA_INSTANCE: kohadev
+      KOHA_DB_HOST: db
+      DB_HOSTNAME: db
+      DB_USER: koha_kohadev
+      DB_NAME: koha_kohadev
+      DB_PASSWORD: password
+      KOHA_TARGET: prod-runtime
       KOHA_PATH: /kohadevbox/koha
       BUILD_DIR: /kohadevbox
-      KOHA_CONF: /etc/koha/sites/kohadev/koha-conf.xml
-      KOHA_INSTANCE: ${KOHA_INSTANCE:-kohadev}
-      KOHA_DOMAIN: ${KOHA_DOMAIN:-.127.0.0.1.nip.io}
-      KOHA_OPAC_PORT: ${KOHA_OPAC_PORT:-8080}
-      KOHA_INTRANET_PORT: ${KOHA_INTRANET_PORT:-8081}
-      DB_HOSTNAME: ${DB_HOSTNAME:-db}
-      DB_USER: ${DB_USER:-koha_kohadev}
-      DB_NAME: ${DB_NAME:-koha_kohadev}
-      DB_PASSWORD: ${DB_PASSWORD:-password}
-      ELASTICSEARCH_SERVER: ${ELASTICSEARCH_SERVER:-os01:9200}
-      ELASTIC_SERVER: ${ELASTIC_SERVER:-https://os01:9200}
-      ELASTIC_OPTIONS: ${ELASTIC_OPTIONS}
-      PERL_LWP_SSL_VERIFY_HOSTNAME: ${PERL_LWP_SSL_VERIFY_HOSTNAME:-0}
-      KOHA_ALPINE_SKIP_YARN_INSTALL: ${KOHA_ALPINE_SKIP_YARN_INSTALL:-yes}
-      KOHA_ALPINE_SKIP_GIT_SETUP: ${KOHA_ALPINE_SKIP_GIT_SETUP:-yes}
-      KOHA_ALPINE_SKIP_L10N: ${KOHA_ALPINE_SKIP_L10N:-yes}
-      KOHA_ALPINE_SKIP_ELASTICSEARCH_WAIT: ${KOHA_ALPINE_SKIP_ELASTICSEARCH_WAIT:-yes}
-      SKIP_RUNTIME_ASSET_COPY: ${SKIP_RUNTIME_ASSET_COPY:-yes}
-    ports:
-      - "${KOHA_OPAC_PORT:-8080}:8080"
-      - "${KOHA_INTRANET_PORT:-8081}:8081"
+      KOHA_OPAC_PORT: "8080"
+      KOHA_INTRANET_PORT: "8081"
+      ELASTICSEARCH_SERVER: os01:9200
+      MESSAGE_BROKER_HOST: rabbitmq
+      MESSAGE_BROKER_PORT: "5672"
+      MESSAGE_BROKER_USER: guest
+      MESSAGE_BROKER_PASS: guest
+      KOHA_ALPINE_SKIP_YARN_INSTALL: "yes"
+      KOHA_ALPINE_SKIP_GIT_SETUP: "yes"
+      KOHA_ALPINE_SKIP_L10N: "yes"
+      KOHA_ALPINE_SKIP_ELASTICSEARCH_WAIT: "yes"
+      KOHA_ALPINE_SKIP_RUNTIME_COPY: "no"
+      KOHA_ALPINE_SKIP_DEBIAN_SCRIPTS: "no"
+      SKIP_RUNTIME_ASSET_COPY: "no"
+      KOHA_ENABLE_PLACK: "yes"
+      KOHA_ENABLE_WORKER: "yes"
     volumes:
-      - ${SYNC_REPO:-./koha}:/kohadevbox/koha:ro
-    networks:
-      - internal
-      - osearch
-    external_links:
-      - os01:os01
-
-networks:
-  internal:
-    driver: bridge
-  osearch:
-    name: opensearch-36_osearch
-    external: true
+      - ./koha:/kohadevbox/koha:ro
+      - ./files-alpine:/build/files-alpine:ro
+      - koha_logs:/var/log/koha
+      - koha_var_lib:/var/lib/koha
 
 volumes:
   db_data:
+  koha_logs:
+  koha_var_lib:
