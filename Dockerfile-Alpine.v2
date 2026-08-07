@@ -1,4 +1,4 @@
-# Dockerfile-Alpine.v2 - FINAL v6 with YAZ from source + ZOOM
+# Dockerfile-Alpine.v2 - FINAL v9 - explicit full Koha deps + YAZ + perl fix + worker compat
 FROM docker.io/library/node:22-alpine AS node-builder
 WORKDIR /tmp/build
 COPY . /tmp/context/
@@ -17,35 +17,66 @@ RUN addgroup -g 1000 kohadev && adduser -D -u 1000 -G kohadev -h /var/lib/koha/k
     mkdir -p /etc/koha /var/lib/koha /var/log/koha /var/run/koha /var/cache/koha /kohadevbox /opt/koha-tmpl-built /etc/mysql/ssl /etc/apache2/sites-available /etc/apache2/sites-enabled /usr/local/lib /kohadevbox/lib /kohadevbox/templates /var/lib/koha/kohadev /usr/share/koha/bin /lib/lsb /etc/koha/sites
 RUN apk add --no-cache perl perl-cgi perl-dbd-mysql perl-dbi apache2 apache2-utils mariadb-client openssl ca-certificates curl wget tzdata sudo bash gettext envsubst pwgen findutils perl-app-cpanminus apache2-proxy iproute2 net-tools procps yaml-dev libxml2 libxslt xmlstarlet openrc libxml2-dev libxslt-dev icu-dev libxslt
 
-# Build and install YAZ (Z39.50/SRU toolkit) from source on Alpine musl - from your main branch
 ENV YAZ_VERSION=5.37.3
 RUN apk add --no-cache --virtual .yaz-build-deps build-base libxslt-dev libxml2-dev openssl-dev zlib-dev icu-dev readline-dev libedit-dev \
     && wget https://ftp.indexdata.com/pub/yaz/yaz-${YAZ_VERSION}.tar.gz -O /tmp/yaz.tar.gz \
     && tar -xzf /tmp/yaz.tar.gz -C /tmp \
     && cd /tmp/yaz-${YAZ_VERSION} \
     && CFLAGS="-std=gnu17 -Wno-error=implicit-function-declaration -D_GNU_SOURCE" ./configure --prefix=/usr --sysconfdir=/etc \
-    && make -j$(nproc) \
-    && make install \
-    && cd / \
-    && rm -rf /tmp/yaz* \
-    && apk del .yaz-build-deps \
+    && make -j$(nproc) && make install && cd / && rm -rf /tmp/yaz* && apk del .yaz-build-deps \
     && apk add --no-cache libxslt libxml2 icu-libs readline libedit
 
 FROM base AS builder
 RUN apk add --no-cache --virtual .build-deps build-base perl-dev linux-headers openssl-dev zlib-dev expat-dev mariadb-dev libxml2-dev libxslt-dev icu-dev
 RUN curl -L https://cpanmin.us | perl - --self-upgrade
-# Added Net::Z3950::ZOOM which now links against /usr built YAZ
-RUN cpanm --notest --local-lib=/opt/koha-perl Modern::Perl Text::CSV_XS Email::Valid XML::LibXML XML::LibXSLT MARC::Record MARC::File::XML DBIx::Class Mojolicious JSON::Validator Crypt::SysRandom Crypt::JWT Lingua::Stem::Snowball Template LWP::UserAgent Plack Plack::Middleware::ReverseProxy Starman Gazelle Server::Starter Net::Server::SS::PreFork Parallel::Prefork Daemon::Control YAML::XS CGI::Emulate::PSGI CGI::Compile Starlet Net::CIDR Locale::PO DateTime::Format::MySQL Net::Z3950::ZOOM ZOOM Biblio::EndnoteStyle MARC::Charset MARC::File::USMARC
+# Full Koha core deps - explicit to avoid cpanfile failures on Alpine
+RUN cpanm --notest --local-lib=/opt/koha-perl \
+    Modern::Perl \
+    Log::Log4perl \
+    Text::CSV Text::CSV_XS \
+    Email::Valid Email::MIME Email::Sender \
+    XML::LibXML XML::LibXSLT XML::Simple XML::SAX \
+    MARC::Record MARC::File::XML MARC::File::USMARC MARC::Charset \
+    DBIx::Class DBIx::Class::Schema::Loader DBD::mysql \
+    Mojolicious Mojo::Server::PSGI \
+    JSON::Validator JSON \
+    Crypt::SysRandom Crypt::JWT Crypt::Eksblowfish \
+    Lingua::Stem::Snowball \
+    Template \
+    LWP::UserAgent LWP::Protocol::https \
+    Plack Plack::Middleware::ReverseProxy Starman Gazelle Server::Starter Net::Server::SS::PreFork Parallel::Prefork Daemon::Control YAML::XS CGI::Emulate::PSGI CGI::Compile Starlet Net::CIDR Locale::PO \
+    DateTime DateTime::Format::MySQL DateTime::Format::DateParse DateTime::TimeZone \
+    Net::Z3950::ZOOM ZOOM Biblio::EndnoteStyle \
+    Sereal Sereal::Encoder Sereal::Decoder Cache::Memcached::Fast Cache::Memcached CHI \
+    Struct::Diff Array::Utils List::MoreUtils \
+    Moo MooX::Types::MooseLike MooX::Types::MooseLike::Numeric Class::Load Data::OptList Params::Util Sub::Install Sub::Exporter String::RewritePrefix \
+    Digest::JHash Data::UUID Task::Weaken Time::Duration::Parse Log::Any Carp::Assert Time::Duration Hash::MoreUtils \
+    Search::Elasticsearch \
+    Gravatar::URL \
+    Business::ISBN \
+    PDF::API2 PDF::Reuse Barcode::Code39 \
+    GD GD::Barcode::QRcode \
+    Net::LDAP Net::OAuth2 \
+    String::Random \
+    Email::Stuffer \
+    File::Slurp \
+    IPC::Cmd \
+    Try::Tiny Exception::Class \
+    Module::Load::Conditional \
+    Algorithm::CheckDigits \
+    Memoize::Memcached \
+    Data::GUID \
+    Devel::Cover \
+    Test::More
 
 FROM base AS prod-runtime
 COPY --from=builder /opt/koha-perl /opt/koha-perl
 COPY --from=node-builder /opt/koha-tmpl-built /opt/koha-tmpl-built
 COPY files-alpine/ /build/files-alpine/
 COPY koha/ /kohadevbox/koha/
-
 RUN set -eux; \
     cp /build/files-alpine/run.sh /usr/local/bin/run.sh; \
-    mkdir -p /usr/sbin /usr/local/bin /usr/share/koha/bin /kohadevbox/lib /etc/koha /kohadevbox/templates /var/log/koha/kohadev /var/run/koha /var/cache/koha /lib/lsb; \
+    mkdir -p /usr/sbin /usr/local/bin /usr/share/koha/bin /kohadevbox/lib /etc/koha /kohadevbox/templates /var/log/koha/kohadev /var/run/koha /var/cache/koha /lib/lsb /opt/koha-perl/bin; \
     printf '#!/bin/sh\nlog_daemon_msg(){ echo "$2"; }\nlog_end_msg(){ return ${1:-0}; }\nlog_progress_msg(){ echo -n "$@"; }\nlog_warning_msg(){ echo "WARN $@" >&2; }\nlog_failure_msg(){ echo "FAIL $@" >&2; }\nlog_success_msg(){ echo "$@"; }\n' > /lib/lsb/init-functions; chmod +x /lib/lsb/init-functions; \
     printf '#!/bin/sh\necho "Server version: Apache/2.4.58 (Alpine)"\necho "Syntax OK"\nexit 0\n' > /usr/sbin/apache2ctl; chmod +x /usr/sbin/apache2ctl; \
     printf '#!/bin/sh\nexit 0\n' > /usr/sbin/a2enmod; chmod +x /usr/sbin/a2enmod; \
@@ -61,9 +92,15 @@ RUN set -eux; \
     cp -r /build/files-alpine/templates/* /kohadevbox/templates/ 2>/dev/null || true; \
     cp -r /build/files-alpine/templates/* /etc/koha/ 2>/dev/null || true; \
     chmod +x /usr/sbin/koha-* /usr/local/bin/koha-* /usr/local/bin/run.sh /kohadevbox/lib/*.sh 2>/dev/null || true; \
-    /opt/koha-perl/bin/perl -MZOOM -e 'print "ZOOM OK $ZOOM::VERSION\n"' && /opt/koha-perl/bin/perl -MStarman -e 'print "Starman OK\n"' && yaz-config --version; \
-    echo "prod-runtime v6 YAZ ${YAZ_VERSION} + ZOOM built"
-
+    ln -sf /usr/bin/perl /opt/koha-perl/bin/perl; \
+    sed -i 's|#!/opt/koha-perl/bin/perl|#!/usr/bin/perl|g' /opt/koha-perl/bin/* 2>/dev/null || true; \
+    mkdir -p /etc/koha && echo '1;' > /etc/koha/plack.psgi; \
+    PERL5LIB=/opt/koha-perl/lib/perl5 /usr/bin/perl -MZOOM -e 'print "ZOOM OK $ZOOM::VERSION\n"'; \
+    PERL5LIB=/opt/koha-perl/lib/perl5 /usr/bin/perl -MLog::Log4perl -e 'print "Log4perl OK\n"'; \
+    PERL5LIB=/opt/koha-perl/lib/perl5 /usr/bin/perl -MSereal::Encoder -e 'print "Sereal OK\n"'; \
+    PERL5LIB=/opt/koha-perl/lib/perl5 /usr/bin/perl -MStarman -e 'print "Starman OK\n"'; \
+    yaz-config --version; \
+    echo "prod-runtime v9 full deps"
 ENV PERL5LIB=/opt/koha-perl/lib/perl5:/kohadevbox/koha/lib:/kohadevbox/koha
 ENV PATH=/opt/koha-perl/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ENV KOHA_PATH=/kohadevbox/koha

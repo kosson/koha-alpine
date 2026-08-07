@@ -1,5 +1,5 @@
 #!/bin/sh
-# koha-worker FINAL v5 - no set -u
+# koha-worker FINAL v7 - fixes paths
 set -e
 ACTION="${1:-status}"
 INSTANCE="${2:-kohadev}"
@@ -7,12 +7,11 @@ RUN_DIR="/var/run/koha/${INSTANCE}"
 LOG_DIR="/var/log/koha/${INSTANCE}"
 PIDFILE="${RUN_DIR}/worker.pid"
 mkdir -p "${RUN_DIR}" "${LOG_DIR}"
-export PERL5LIB="/opt/koha-perl/lib/perl5:/kohadevbox/koha/lib:/kohadevbox/koha"
+export PERL5LIB="/opt/koha-perl/lib/perl5:/kohadevbox/koha/lib:/kohadevbox/koha:${PERL5LIB:-}"
 CONF="/etc/koha/sites/${INSTANCE}/koha-conf.xml"
 [ -f "$CONF" ] || CONF="/kohadevbox/koha/etc/koha-conf.xml"
 export KOHA_CONF="$CONF"
 export KOHA_HOME="/kohadevbox/koha"
-export KOHA_PATH="/kohadevbox/koha"
 
 is_running(){
   [ -f "$PIDFILE" ] || return 1
@@ -21,32 +20,28 @@ is_running(){
   kill -0 "$pid" 2>/dev/null
 }
 
+PERL_BIN=""; for p in /usr/bin/perl /usr/local/bin/perl; do [ -x "$p" ] && PERL_BIN="$p" && break; done; PERL_BIN="${PERL_BIN:-perl}"
+
 case "$ACTION" in
   --start|--restart)
     [ "$ACTION" = "--restart" ] && { [ -f "$PIDFILE" ] && kill $(cat "$PIDFILE" 2>/dev/null || true) 2>/dev/null || true; rm -f "$PIDFILE"; sleep 1; }
     if is_running; then echo "[worker] already running $(cat $PIDFILE)"; exit 0; fi
     WORKER=""
-    for w in "/kohadevbox/koha/misc/worker/worker.pl" "/kohadevbox/koha/bin/background_jobs_worker.pl" "/kohadevbox/koha/misc/background_jobs_worker.pl"; do
+    for w in "/kohadevbox/koha/misc/background_jobs_worker.pl" "/kohadevbox/koha/bin/background_jobs_worker.pl" "/kohadevbox/koha/misc/worker/worker.pl" "/kohadevbox/koha/bin/worker.pl"; do
       [ -f "$w" ] && WORKER="$w" && break
     done
     if [ -z "$WORKER" ]; then
-      echo "[worker] No worker script found, skipping (dummy pid)"
+      echo "[worker] No worker script found, skipping dummy"
       echo $$ > "$PIDFILE"
       exit 0
     fi
     echo "[worker] Starting $WORKER for $INSTANCE"
-    nohup perl "$WORKER" >> "${LOG_DIR}/worker.log" 2>&1 &
+    nohup $PERL_BIN "$WORKER" >> "${LOG_DIR}/worker.log" 2>&1 &
     echo $! > "$PIDFILE"
     sleep 1
     ;;
-  --stop)
-    [ -f "$PIDFILE" ] && kill $(cat "$PIDFILE" 2>/dev/null || true) 2>/dev/null || true
-    rm -f "$PIDFILE"
-    pkill -f "worker.*$INSTANCE" 2>/dev/null || true
-    ;;
-  --status)
-    if is_running; then echo "[worker] running pid $(cat $PIDFILE)"; exit 0; else echo "[worker] not running"; exit 1; fi
-    ;;
-  --enable|--disable) echo "[worker] $ACTION noop on Alpine";;
-  *) echo "Usage: $0 {--start|--stop|--status} [instance]"; exit 1;;
+  --stop) [ -f "$PIDFILE" ] && kill $(cat "$PIDFILE" 2>/dev/null || true) 2>/dev/null || true; rm -f "$PIDFILE"; pkill -f background_jobs_worker 2>/dev/null || true ;;
+  --status) if is_running; then echo "[worker] running pid $(cat $PIDFILE)"; exit 0; else echo "[worker] not running"; exit 1; fi ;;
+  --enable|--disable) echo "[worker] $ACTION noop" ;;
+  *) echo "Usage: $0 {--start|--stop|--status}"; exit 1 ;;
 esac

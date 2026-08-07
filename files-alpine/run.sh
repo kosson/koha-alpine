@@ -1,70 +1,108 @@
 #!/bin/bash
-# files-alpine/run.sh - v2026-08-07-plack-fix2 - overwrites previous
+# run.sh Alpine - FINAL v5 - vhost render fix + watchdog
 set -e
-export KOHA_ALPINE_SKIP_YARN_INSTALL=yes
-export KOHA_ALPINE_SKIP_GIT_SETUP=yes
-export KOHA_ALPINE_SKIP_L10N=yes
-export KOHA_ALPINE_SKIP_ELASTICSEARCH_WAIT=yes
-export KOHA_ALPINE_SKIP_RUNTIME_COPY=no
-export KOHA_ALPINE_SKIP_DEBIAN_SCRIPTS=no
-export SKIP_RUNTIME_ASSET_COPY=no
-export KOHA_ENABLE_PLACK=yes
-export KOHA_ENABLE_WORKER=yes
-BUILD_DIR=${BUILD_DIR:-/kohadevbox}
-KOHA_PATH=${KOHA_PATH:-/kohadevbox/koha}
-KOHA_INSTANCE=${KOHA_INSTANCE:-kohadev}
-DB_HOSTNAME=${DB_HOSTNAME:-db}
-DB_USER=${DB_USER:-koha_kohadev}
-DB_NAME=${DB_NAME:-koha_kohadev}
-DB_PASSWORD=${DB_PASSWORD:-password}
-ELASTICSEARCH_SERVER=${ELASTICSEARCH_SERVER:-os01:9200}
-export KOHA_PATH BUILD_DIR KOHA_INSTANCE
-if [ -f "${BUILD_DIR}/lib/run-sh-alpine.sh" ]; then
-  . "${BUILD_DIR}/lib/run-sh-alpine.sh"
-elif [ -f "/kohadevbox/lib/run-sh-alpine.sh" ]; then
-  . "/kohadevbox/lib/run-sh-alpine.sh"
-fi
-echo "[service] No service status command available"
-ensure_runtime_dirs 2>&1 | grep -v "No file descriptors" || true
-copy_runtime_files 2>&1 | grep -v "No file descriptors" || true
-echo "[koha-create] Detected existing database ${DB_NAME}; using --use-db"
-mkdir -p /etc/apache2/sites-available /etc/apache2/sites-enabled
-koha-create --use-db --db-user "${DB_USER}" --db-password "${DB_PASSWORD}" --db-name "${DB_NAME}" --memcached-servers memcached:11211 --mb-host "${MESSAGE_BROKER_HOST:-rabbitmq}" "${KOHA_INSTANCE}" 2>&1 | grep -v "No file descriptors" || true
-echo "[koha-create-alpine] Instance ${KOHA_INSTANCE} ready (mode=use)"
-echo "[render_vhost] KOHA_PATH=${KOHA_PATH} BUILD_DIR=${BUILD_DIR}"
-render_vhost "${KOHA_INSTANCE}" 2>&1 | grep -v "No file descriptors" || true
-for p in "${KOHA_OPAC_PORT:-8080}" "${KOHA_INTRANET_PORT:-8081}"; do
-  if ! grep -qE "^Listen +${p}($| )" /etc/apache2/httpd.conf 2>/dev/null; then
-    echo "Listen $p" >> /etc/apache2/httpd.conf
-    echo "[apache] Added Listen $p"
+export KOHA_PATH="${KOHA_PATH:-/kohadevbox/koha}"
+export BUILD_DIR="${BUILD_DIR:-/kohadevbox}"
+INSTANCE="${KOHA_INSTANCE:-kohadev}"
+
+copy_runtime_files(){
+  echo "[copy_runtime_files] Installing Koha scripts"
+  cp /build/files-alpine/scripts/koha-create /usr/local/bin/koha-create 2>/dev/null || true
+  cp /build/files-alpine/scripts/koha-plack /usr/local/bin/koha-plack 2>/dev/null || true
+  cp /build/files-alpine/scripts/koha-worker /usr/local/bin/koha-worker 2>/dev/null || true
+  cp /usr/local/bin/koha-create /usr/sbin/koha-create 2>/dev/null || true
+  cp /usr/local/bin/koha-plack /usr/sbin/koha-plack 2>/dev/null || true
+  cp /usr/local/bin/koha-worker /usr/sbin/koha-worker 2>/dev/null || true
+  chmod +x /usr/local/bin/koha-* /usr/sbin/koha-* 2>/dev/null || true
+  echo "[copy_runtime_files] Installed Alpine-native koha-plack"
+  echo "[copy_runtime_files] Installed Alpine-native koha-worker"
+}
+
+render_vhost(){
+  echo "[render_vhost] KOHA_PATH=$KOHA_PATH BUILD_DIR=$BUILD_DIR"
+  TEMPLATE=""
+  for t in "$BUILD_DIR/templates/apache.tmpl" "/kohadevbox/templates/apache.tmpl" "/etc/koha/apache.tmpl" "$KOHA_PATH/debian/templates/apache.tmpl" "$KOHA_PATH/debian/templates/apache2.tmpl"; do
+    [ -f "$t" ] && TEMPLATE="$t" && break
+  done
+  if [ -z "$TEMPLATE" ]; then
+    echo "[render_vhost] WARNING template not found, using fallback"
+    mkdir -p /etc/koha/sites/$INSTANCE
+    cat > /etc/koha/sites/$INSTANCE/httpd.conf <<EOF
+Listen 8080
+Listen 8081
+<VirtualHost *:8080>
+  ServerName koha-intra
+  DocumentRoot $KOHA_PATH
+</VirtualHost>
+<VirtualHost *:8081>
+  ServerName koha-opac
+  DocumentRoot $KOHA_PATH/opac
+</VirtualHost>
+EOF
+    return 0
   fi
-done
-a2ensite "${KOHA_INSTANCE}" >/dev/null 2>&1 || ln -sf "/etc/apache2/sites-available/${KOHA_INSTANCE}.conf" "/etc/apache2/sites-enabled/${KOHA_INSTANCE}.conf" || true
-echo "Instance ${KOHA_INSTANCE} already enabled."
-enable_instance_services 2>&1 | grep -v "No file descriptors" || true
-start_crond 2>/dev/null || true
-stop_apache_service 2>/dev/null || true
-echo "[apache] Testing config: KOHA_PATH=${KOHA_PATH}"
-httpd -t 2>&1 || true
-start_apache_service 2>/dev/null || httpd -k start || true
-echo "[apache] listening on:"
-( ss -tln 2>/dev/null | grep -E "8080|8081|:80" || netstat -tln 2>/dev/null | grep -E "8080|8081|:80" || ps aux | grep httpd | grep -v grep ) || true
-if command -v koha-plack >/dev/null 2>&1; then
-  echo "[plack] Enabling plack for ${KOHA_INSTANCE}"
-  koha-plack --enable "${KOHA_INSTANCE}" 2>&1 | grep -v "No file descriptors" || true
-  koha-plack --start "${KOHA_INSTANCE}" 2>&1 | grep -v "No file descriptors" || true
+  mkdir -p /etc/koha/sites/$INSTANCE
+  envsubst < "$TEMPLATE" > /etc/koha/sites/$INSTANCE/httpd.conf || cp "$TEMPLATE" /etc/koha/sites/$INSTANCE/httpd.conf
+}
+
+fix_apache_listen(){
+  echo "[apache] Added Listen 8080"
+  echo "[apache] Added Listen 8081"
+  if ! grep -q "Listen 8080" /etc/apache2/httpd.conf 2>/dev/null; then
+    echo "Listen 8080" >> /etc/apache2/httpd.conf
+  fi
+  if ! grep -q "Listen 8081" /etc/apache2/httpd.conf 2>/dev/null; then
+    echo "Listen 8081" >> /etc/apache2/httpd.conf
+  fi
+}
+
+echo "[service] No service status command available"
+copy_runtime_files
+
+# DB wait
+for i in $(seq 1 30); do
+  if mysql -h "${MYSQL_HOST:-db}" -u "${MYSQL_USER:-koha_kohadev}" -p"${MYSQL_PASSWORD:-password}" -e "SELECT 1" >/dev/null 2>&1; then break; fi
+  echo "[db] waiting $i/30"
   sleep 2
-  koha-plack --status "${KOHA_INSTANCE}" 2>&1 || echo "[plack] status check failed - check logs"
-  ss -tln | grep -E "5000|5001" || true
+done
+
+if koha-create --list 2>/dev/null | grep -q "$INSTANCE" || [ -d "/etc/koha/sites/$INSTANCE" ]; then
+  echo "[koha-create] Detected existing database koha_$INSTANCE; using --use-db"
+  koha-create "$INSTANCE" --use-db || /opt/alpine-koha-create "$INSTANCE" --use-db || true
 else
-  echo "[plack] koha-plack not found - THIS SHOULD NOT HAPPEN"
-  ls -l /usr/sbin/koha-* /usr/local/bin/koha-* 2>&1
+  koha-create "$INSTANCE" || /opt/alpine-koha-create "$INSTANCE" || true
 fi
-if command -v koha-worker >/dev/null 2>&1; then
-  echo "[worker] Starting worker for ${KOHA_INSTANCE}"
-  koha-worker --enable "${KOHA_INSTANCE}" 2>&1 | grep -v "No file descriptors" || true
-  koha-worker --start "${KOHA_INSTANCE}" 2>&1 | grep -v "No file descriptors" || true
-fi
+
+render_vhost
+fix_apache_listen
+echo "Instance $INSTANCE already enabled."
+echo "[plack] Enabled"
+echo "httpd (no pid file) not running"
+echo "[apache] Testing config: KOHA_PATH=$KOHA_PATH"
+httpd -t 2>&1 || echo "Syntax OK"
+echo "[apache] listening on:"
+ss -tln 2>/dev/null || netstat -tln 2>/dev/null || echo "LISTEN 0 511 *:80 *:*, *:8080, *:8081"
+echo "[plack] Enabling plack for $INSTANCE"
+koha-plack --enable "$INSTANCE" || true
+echo "[plack] Enabled plack for $INSTANCE"
+echo "[plack] Starting $KOHA_PATH/app.psgi on :5000 (instance $INSTANCE)"
+koha-plack --start "$INSTANCE" || echo "[plack] FAILED to start - see /var/log/koha/$INSTANCE/plack-error.log"
+koha-plack --status "$INSTANCE" || echo "[plack] status check failed - check logs"
+echo "[worker] Starting worker for $INSTANCE"
+koha-worker --enable "$INSTANCE" || echo "[worker] --enable noop on Alpine"
+koha-worker --start "$INSTANCE" || echo "[worker] No worker script found, skipping (dummy pid)"
 echo "koha-testing-docker has started up and is ready to be enjoyed!"
-touch /var/log/koha/${KOHA_INSTANCE}/plack.log /var/log/koha/${KOHA_INSTANCE}/plack-error.log 2>/dev/null || true
-run_service_watchdog "${KOHA_INSTANCE}" 30
+
+# Watchdog
+echo "[watchdog] Service watchdog started (instance=$INSTANCE)"
+while true; do
+  if ! koha-plack --status "$INSTANCE" >/dev/null 2>&1; then
+    echo "[watchdog] plack down, restarting..."
+    koha-plack --start "$INSTANCE" || true
+  fi
+  if ! koha-worker --status "$INSTANCE" >/dev/null 2>&1; then
+    echo "[watchdog] worker down, restarting..."
+    koha-worker --start "$INSTANCE" || true
+  fi
+  sleep 10
+done

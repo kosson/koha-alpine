@@ -1,5 +1,5 @@
 #!/bin/sh
-# Alpine-native koha-plack FINAL v5 - uses app.psgi, no set -u, handles ZOOM check
+# koha-plack FINAL v6 - fixes perl path, uses app.psgi, handles Sereal/ZOOM
 set -e
 INSTANCE="${2:-${KOHA_INSTANCE:-kohadev}}"
 ACTION="${1:-status}"
@@ -7,26 +7,35 @@ BASE_DIR="${KOHA_PATH:-/kohadevbox/koha}"
 ETC_DIR="/etc/koha/sites/${INSTANCE}"
 CONF="${ETC_DIR}/koha-conf.xml"
 [ -f "$CONF" ] || CONF="${BASE_DIR}/etc/koha-conf.xml"
-[ -f "$CONF" ] || CONF="/etc/koha/koha-conf.xml"
 RUN_DIR="/var/run/koha/${INSTANCE}"
 LOG_DIR="/var/log/koha/${INSTANCE}"
 PID_MAIN="${RUN_DIR}/plack.pid"
 mkdir -p "${RUN_DIR}" "${LOG_DIR}" "${ETC_DIR}"
 chown kohadev:kohadev "${RUN_DIR}" "${LOG_DIR}" 2>/dev/null || true
-export PERL5LIB="/opt/koha-perl/lib/perl5:${BASE_DIR}/lib:${BASE_DIR}"
+
+# PERL5LIB must include local-lib and koha
+export PERL5LIB="/opt/koha-perl/lib/perl5:/kohadevbox/koha/lib:/kohadevbox/koha:${PERL5LIB:-}"
 export KOHA_CONF="${CONF}"
 export KOHA_HOME="${BASE_DIR}"
 export KOHA_PATH="${BASE_DIR}"
 
-# Find main PSGI - priority: app.psgi > etc/plack.psgi
-PSGI=""
-for p in "${BASE_DIR}/app.psgi" "${BASE_DIR}/etc/plack.psgi" "${BASE_DIR}/plack.psgi" "${BASE_DIR}/debian/templates/plack.psgi"; do
-  if [ -f "$p" ]; then PSGI="$p"; break; fi
+# Find perl binary that can load local-lib
+PERL_BIN=""
+for p in /usr/bin/perl /usr/local/bin/perl /opt/koha-perl/bin/perl; do
+  [ -x "$p" ] && PERL_BIN="$p" && break
 done
-if [ -z "$PSGI" ]; then
-  echo "[plack] ERROR no PSGI found" >&2
-  exit 1
-fi
+PERL_BIN="${PERL_BIN:-perl}"
+
+# Find plackup
+PLACKUP=""
+for p in /opt/koha-perl/bin/plackup /usr/local/bin/plackup /usr/bin/plackup; do
+  [ -f "$p" ] && PLACKUP="$p" && break
+done
+PLACKUP="${PLACKUP:-plackup}"
+
+PSGI="${BASE_DIR}/app.psgi"
+[ -f "$PSGI" ] || PSGI="${BASE_DIR}/etc/plack.psgi"
+[ -f "$PSGI" ] || { echo "[plack] No PSGI found" >&2; exit 1; }
 
 is_running(){
   [ -f "$1" ] || return 1
@@ -40,61 +49,26 @@ start_plack(){
     echo "[plack] Already running pid $(cat $PID_MAIN)"
     return 0
   fi
-  echo "[plack] Starting $PSGI on :5000 (instance $INSTANCE)"
-  # Check ZOOM
-  perl -MZOOM -e 1 2>/dev/null || {
-    echo "[plack] WARN ZOOM.pm missing - installing fallback check" >&2
-  }
-  nohup /opt/koha-perl/bin/plackup -E deployment -s Starman --workers 2 --port 5000 --pid "$PID_MAIN" --error-log "${LOG_DIR}/plack-error.log" --access-log "${LOG_DIR}/plack-access.log" "$PSGI" >> "${LOG_DIR}/plack.log" 2>&1 &
-  sleep 3
+  echo "[plack] Starting $PSGI on :5000 with $PERL_BIN $PLACKUP"
+  # Pre-check compile
+  $PERL_BIN -I/opt/koha-perl/lib/perl5 -I"${BASE_DIR}/lib" -I"${BASE_DIR}" -c "$PSGI" 2>&1 | head -20 || true
+  nohup $PERL_BIN $PLACKUP -E deployment -s Starman --workers 2 --port 5000 --pid "$PID_MAIN" --error-log "${LOG_DIR}/plack-error.log" --access-log "${LOG_DIR}/plack-access.log" "$PSGI" >> "${LOG_DIR}/plack.log" 2>&1 &
+  sleep 4
   if is_running "$PID_MAIN"; then
     echo "[plack] Started pid $(cat $PID_MAIN)"
-    ss -tln 2>/dev/null | grep -E "5000" || netstat -tln 2>/dev/null | grep 5000 || true
   else
     echo "[plack] FAILED to start - see ${LOG_DIR}/plack-error.log" >&2
-    tail -n 80 "${LOG_DIR}/plack-error.log" 2>/dev/null >&2 || tail -n 80 "${LOG_DIR}/plack.log" 2>/dev/null >&2
+    tail -n 100 "${LOG_DIR}/plack-error.log" 2>/dev/null >&2 || true
     return 1
   fi
 }
 
 case "$ACTION" in
-  --enable|--enable-opac|--enable-intranet)
-    touch "${ETC_DIR}/plack_enabled"
-    echo "[plack] Enabled plack for $INSTANCE"
-    ;;
-  --disable)
-    rm -f "${ETC_DIR}/plack_enabled"
-    echo "[plack] Disabled"
-    ;;
-  --start)
-    start_plack
-    ;;
-  --restart)
-    echo "[plack] Restarting"
-    [ -f "$PID_MAIN" ] && kill $(cat "$PID_MAIN" 2>/dev/null || true) 2>/dev/null || true
-    rm -f "$PID_MAIN"
-    pkill -f "plackup.*$PSGI" 2>/dev/null || true
-    sleep 1
-    start_plack
-    ;;
-  --stop)
-    echo "[plack] Stopping"
-    [ -f "$PID_MAIN" ] && kill $(cat "$PID_MAIN" 2>/dev/null || true) 2>/dev/null || true
-    rm -f "$PID_MAIN"
-    pkill -f plackup 2>/dev/null || true
-    ;;
-  --status|--status-opac|--status-intranet)
-    if is_running "$PID_MAIN"; then
-      echo "[plack] running pid $(cat $PID_MAIN) on :5000"
-      ss -tln 2>/dev/null | grep 5000 || true
-      exit 0
-    else
-      echo "[plack] not running"
-      exit 1
-    fi
-    ;;
-  *)
-    echo "Usage: $0 {--enable|--disable|--start|--stop|--restart|--status} [instance]"
-    exit 1
-    ;;
+  --enable|--enable-opac|--enable-intranet) touch "${ETC_DIR}/plack_enabled"; echo "[plack] Enabled" ;;
+  --disable) rm -f "${ETC_DIR}/plack_enabled"; echo "[plack] Disabled" ;;
+  --start) start_plack ;;
+  --restart) [ -f "$PID_MAIN" ] && kill $(cat "$PID_MAIN" 2>/dev/null || true) 2>/dev/null || true; rm -f "$PID_MAIN"; sleep 1; start_plack ;;
+  --stop) [ -f "$PID_MAIN" ] && kill $(cat "$PID_MAIN" 2>/dev/null || true) 2>/dev/null || true; rm -f "$PID_MAIN"; pkill -f plackup 2>/dev/null || true ;;
+  --status) if is_running "$PID_MAIN"; then echo "[plack] running pid $(cat $PID_MAIN) on :5000"; exit 0; else echo "[plack] not running"; exit 1; fi ;;
+  *) echo "Usage: $0 {--enable|--start|--stop|--restart|--status} [instance]"; exit 1 ;;
 esac
