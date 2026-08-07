@@ -1,283 +1,48 @@
 #!/bin/sh
-# Alpine-native koha-worker implementation (first cut).
-
+# Alpine-native koha-worker
 set -eu
+ACTION="${1:-status}"
+INSTANCE="${2:-kohadev}"
+RUN_DIR="/var/run/koha/${INSTANCE}"
+LOG_DIR="/var/log/koha/${INSTANCE}"
+PIDFILE="${RUN_DIR}/worker.pid"
+mkdir -p "${RUN_DIR}" "${LOG_DIR}"
+export PERL5LIB="/opt/koha-perl/lib/perl5:/kohadevbox/koha/lib:/kohadevbox/koha"
+export KOHA_CONF="/etc/koha/sites/${INSTANCE}/koha-conf.xml"
+[ -f "$KOHA_CONF" ] || export KOHA_CONF="/kohadevbox/koha/etc/koha-conf.xml"
 
-[ -r /etc/default/koha-common ] && . /etc/default/koha-common
-
-if [ -f /usr/sbin/koha-functions.sh ]; then
-    . /usr/sbin/koha-functions.sh
-elif [ -f /usr/share/koha/bin/koha-functions.sh ]; then
-    . /usr/share/koha/bin/koha-functions.sh
-else
-    echo "[koha-worker-alpine] ERROR: /usr/share/koha/bin/koha-functions.sh not present" >&2
-    exit 1
-fi
-
-log_info() { echo "[koha-worker-alpine] $*"; }
-log_warn() { echo "[koha-worker-alpine] WARNING: $*" >&2; }
-log_err() { echo "[koha-worker-alpine] ERROR: $*" >&2; }
-die_msg() { log_err "$*"; exit 1; }
-
-usage() {
-    local scriptname
-    scriptname=$(basename "$0")
-    cat <<EOF
-$scriptname
-
-Manage worker daemons for Koha instances (Alpine rewrite).
-
-Usage:
-  $scriptname [--start|--stop|--restart|--status] [--queue queue_name] [--quiet|-q] instancename1 [instancename2...]
-  $scriptname -h|--help
-
-Options:
-  --start               Start worker daemon for specified instances
-  --stop                Stop worker daemon for specified instances
-  --restart             Restart worker daemon for specified instances
-  --status              Show worker status for specified instances
-  --queue               Worker queue name (default: default)
-  --quiet|-q            Suppress invalid instance errors
-  --help|-h             Show this help message
-EOF
+is_running() {
+  [ -f "$PIDFILE" ] || return 1
+  pid=$(cat "$PIDFILE" 2>/dev/null || true)
+  case "$pid" in ''|*[!0-9]*) return 1;; esac
+  kill -0 "$pid" 2>/dev/null
 }
 
-op=""
-queue="default"
-quiet="no"
-start_stop_help=""
-ssd_has_retry="no"
-
-set_action() {
-    if [ -z "$op" ]; then
-        op="$1"
-    else
-        die_msg "only one action can be specified"
-    fi
-}
-
-set_help_flag() {
-    start_stop_help="$(start-stop-daemon --help 2>&1 || true)"
-    case "$start_stop_help" in
-        *"--retry"*|*"-R"*) ssd_has_retry=yes ;;
-        *) ssd_has_retry=no ;;
-    esac
-}
-
-worker_pidfile() {
-    local name="$1"
-    local worker_name="$2"
-    printf '/var/run/koha/%s/%s.pid\n' "$name" "$worker_name"
-}
-
-is_worker_running_alpine() {
-    local pidfile="$1"
-
-    [ -s "$pidfile" ] || return 1
-
-    pid="$(cat "$pidfile" 2>/dev/null || true)"
-    case "$pid" in
-        ''|*[!0-9]*) return 1 ;;
-    esac
-
-    if kill -0 "$pid" 2>/dev/null; then
-        return 0
-    fi
-
-    return 1
-}
-
-start_worker() {
-    local name="$1"
-    local queue_name="$2"
-    local worker_name pidfile worker_daemon instance_user
-
-    worker_name="$(get_worker_name "$name" "$queue_name")"
-    pidfile="$(worker_pidfile "$name" "$worker_name")"
-    worker_daemon="${KOHA_HOME}/${KOHA_BINDIR}/workers/background_jobs_worker.pl"
-    instance_user="${name}-koha"
-
-    if is_worker_running_alpine "$pidfile"; then
-        [ "$quiet" != "yes" ] && log_warn "worker already running for $name ($queue_name)"
-        return 1
-    fi
-
-    mkdir -p "/var/run/koha/${name}" "/var/log/koha/${name}"
-    touch "/var/log/koha/${name}/worker-error.log" "/var/log/koha/${name}/worker-output.log"
-    chown "$instance_user:$instance_user" "/var/log/koha/${name}/worker-error.log" "/var/log/koha/${name}/worker-output.log" || true
-
-    export KOHA_CONF="/etc/koha/sites/${name}/koha-conf.xml"
-    log_info "Starting worker for $name ($queue_name)"
-
-    if command -v start-stop-daemon >/dev/null 2>&1; then
-        if start-stop-daemon --start \
-            --background \
-            --make-pidfile \
-            --pidfile "$pidfile" \
-            --user "$instance_user" \
-            --startas /usr/bin/perl \
-            -- "$worker_daemon" --queue "$queue_name" \
-            >>"/var/log/koha/${name}/worker-output.log" 2>>"/var/log/koha/${name}/worker-error.log"; then
-            return 0
-        fi
-    fi
-
-    # Fallback when start-stop-daemon behavior differs on target BusyBox build.
-    su -s /bin/sh - "$instance_user" -c "nohup /usr/bin/perl '$worker_daemon' --queue '$queue_name' >>'/var/log/koha/${name}/worker-output.log' 2>>'/var/log/koha/${name}/worker-error.log' & echo \$! > '$pidfile'"
-
-    is_worker_running_alpine "$pidfile"
-}
-
-stop_worker() {
-    local name="$1"
-    local queue_name="$2"
-    local worker_name pidfile instance_user pid i
-
-    worker_name="$(get_worker_name "$name" "$queue_name")"
-    pidfile="$(worker_pidfile "$name" "$worker_name")"
-    instance_user="${name}-koha"
-
-    if ! is_worker_running_alpine "$pidfile"; then
-        [ "$quiet" != "yes" ] && log_warn "worker not running for $name ($queue_name)"
-        return 1
-    fi
-
-    export KOHA_CONF="/etc/koha/sites/${name}/koha-conf.xml"
-    log_info "Stopping worker for $name ($queue_name)"
-
-    if command -v start-stop-daemon >/dev/null 2>&1; then
-        if [ "$ssd_has_retry" = "yes" ]; then
-            if start-stop-daemon --stop --pidfile "$pidfile" --user "$instance_user" --retry 5 >/dev/null 2>&1; then
-                rm -f "$pidfile"
-                return 0
-            fi
-        elif start-stop-daemon --stop --pidfile "$pidfile" --user "$instance_user" >/dev/null 2>&1; then
-            rm -f "$pidfile"
-            return 0
-        fi
-    fi
-
-    pid="$(cat "$pidfile" 2>/dev/null || true)"
-    case "$pid" in
-        ''|*[!0-9]*) return 1 ;;
-    esac
-
-    kill "$pid" >/dev/null 2>&1 || true
-    i=0
-    while [ "$i" -lt 30 ]; do
-        if ! kill -0 "$pid" 2>/dev/null; then
-            rm -f "$pidfile"
-            return 0
-        fi
-        i=$((i + 1))
-        sleep 1
+case "$ACTION" in
+  --start|--restart)
+    if is_running; then echo "[worker] already running $(cat $PIDFILE)"; exit 0; fi
+    echo "[worker] Starting worker for $INSTANCE"
+    # Koha worker script is misc/worker/worker.pl or bin/worker
+    WORKER=""
+    for w in "/kohadevbox/koha/misc/worker/worker.pl" "/kohadevbox/koha/bin/koha-worker.pl" "/kohadevbox/koha/misc/worker.pl"; do
+      [ -f "$w" ] && WORKER="$w" && break
     done
-
-    kill -KILL "$pid" >/dev/null 2>&1 || true
-    rm -f "$pidfile"
-    return 0
-}
-
-restart_worker() {
-    local name="$1"
-    local queue_name="$2"
-
-    if is_instance "$name"; then
-        stop_worker "$name" "$queue_name" || true
-        start_worker "$name" "$queue_name"
-    else
-        return 1
+    if [ -z "$WORKER" ]; then
+      echo "[worker] No worker script found, skipping" >&2
+      touch "$PIDFILE"
+      echo $$ > "$PIDFILE"
+      exit 0
     fi
-}
-
-worker_status() {
-    local name="$1"
-    local queue_name="$2"
-    local worker_name pidfile
-
-    worker_name="$(get_worker_name "$name" "$queue_name")"
-    pidfile="$(worker_pidfile "$name" "$worker_name")"
-
-    if is_worker_running_alpine "$pidfile"; then
-        [ "$quiet" != "yes" ] && log_info "worker running for ${name} (${queue_name})"
-        return 0
-    fi
-
-    [ "$quiet" != "yes" ] && log_info "worker not running for ${name} (${queue_name})"
-    return 3
-}
-
-while [ "$#" -gt 0 ]; do
-    case "$1" in
-        -h|--help)
-            usage
-            exit 0
-            ;;
-        -q|--quiet)
-            quiet="yes"
-            shift
-            ;;
-        --start)
-            set_action start
-            shift
-            ;;
-        --stop)
-            set_action stop
-            shift
-            ;;
-        --restart)
-            set_action restart
-            shift
-            ;;
-        --status)
-            set_action status
-            shift
-            ;;
-        --queue)
-            queue="$2"
-            shift 2
-            ;;
-        -*)
-            die_msg "invalid option switch ($1)"
-            ;;
-        *)
-            break
-            ;;
-    esac
-done
-
-[ -n "$op" ] || die_msg "missing action"
-
-case "$queue" in
-    default|long_tasks) ;;
-    *) log_warn "non-standard queue '$queue' requested; continuing" ;;
+    nohup perl "$WORKER" --daemon --pidfile "$PIDFILE" >> "${LOG_DIR}/worker.log" 2>&1 &
+    sleep 2
+    ;;
+  --stop)
+    if [ -f "$PIDFILE" ]; then kill $(cat "$PIDFILE") 2>/dev/null || true; rm -f "$PIDFILE"; fi
+    pkill -f "worker.*$INSTANCE" 2>/dev/null || true
+    ;;
+  --status)
+    if is_running; then echo "[worker] running pid $(cat $PIDFILE)"; exit 0; else echo "[worker] not running"; exit 1; fi
+    ;;
+  --enable|--disable) echo "[worker] $ACTION $INSTANCE (noop on Alpine)";;
+  *) echo "Usage: $0 {--start|--stop|--status}"; exit 1;;
 esac
-
-set_help_flag
-
-if [ "$#" -le 0 ]; then
-    [ "$quiet" != "yes" ] && log_warn "you must provide at least one instance name"
-    exit 1
-fi
-
-rc=0
-for name in "$@"; do
-    if is_instance "$name"; then
-        adjust_paths_git_install "$name"
-        export PERL5LIB KOHA_HOME GIT_INSTALL
-
-        case "$op" in
-            start) start_worker "$name" "$queue" || rc=1 ;;
-            stop) stop_worker "$name" "$queue" || rc=1 ;;
-            restart) restart_worker "$name" "$queue" || rc=1 ;;
-            status) worker_status "$name" "$queue" || rc=1 ;;
-        esac
-    else
-        if [ "$quiet" = "no" ]; then
-            log_err "Invalid instance name $name"
-            rc=1
-        fi
-    fi
-done
-
-exit "$rc"

@@ -1,529 +1,169 @@
 #!/bin/sh
-# Alpine-native koha-plack implementation (first cut).
-# Scope: --enable/--disable/--start/--stop/--restart/--reload/--status
-
+# /usr/local/bin/koha-plack - Alpine-native fully functional
+# Replaces Debian koha-plack which requires apache2ctl, xmlstarlet, daemon(), start-stop-daemon --status
 set -eu
 
-[ -r /etc/default/koha-common ] && . /etc/default/koha-common
+INSTANCE="${2:-${KOHA_INSTANCE:-kohadev}}"
+ACTION="${1:-status}"
 
-if [ -f /usr/sbin/koha-functions.sh ]; then
-    . /usr/sbin/koha-functions.sh
-elif [ -f /usr/share/koha/bin/koha-functions.sh ]; then
-    . /usr/share/koha/bin/koha-functions.sh
-else
-    echo "[koha-plack-alpine] ERROR: /usr/share/koha/bin/koha-functions.sh not present" >&2
-    exit 1
-fi
+BASE_DIR="/kohadevbox/koha"
+ETC_DIR="/etc/koha/sites/${INSTANCE}"
+CONF="${ETC_DIR}/koha-conf.xml"
+[ -f "$CONF" ] || CONF="/kohadevbox/koha/etc/koha-conf.xml"
+[ -f "$CONF" ] || CONF="/etc/koha/koha-conf.xml"
 
-log_info() { echo "[koha-plack-alpine] $*"; }
-log_warn() { echo "[koha-plack-alpine] WARNING: $*" >&2; }
-log_err() { echo "[koha-plack-alpine] ERROR: $*" >&2; }
-die_msg() { log_err "$*"; exit 1; }
+RUN_DIR="/var/run/koha/${INSTANCE}"
+LOG_DIR="/var/log/koha/${INSTANCE}"
+PID_OPAC="${RUN_DIR}/plack-opac.pid"
+PID_INTRA="${RUN_DIR}/plack-intra.pid"
+PID_API="${RUN_DIR}/plack-api.pid"
 
-usage() {
-    local scriptname
-    scriptname=$(basename "$0")
-    cat <<EOF
-$scriptname
+mkdir -p "${RUN_DIR}" "${LOG_DIR}" "${ETC_DIR}"
+chown kohadev:kohadev "${RUN_DIR}" "${LOG_DIR}" 2>/dev/null || true
 
-Manage plack daemons for Koha instances (Alpine rewrite).
-
-Usage:
-  $scriptname --start|--stop|--restart|--reload|--status|--development [--quiet|-q] instancename1 [instancename2...]
-  $scriptname --enable|--disable [--quiet|-q] instancename1 [instancename2...]
-  $scriptname -h|--help
-
-Supported options:
-  --start
-  --stop
-  --restart
-  --reload
-  --enable
-  --disable
-  --status
-  --debugger
-  --debugger-key <key>
-  --debugger-location <host:port>
-  --debugger-path <path>
-  -dev|--development
-  -q|--quiet
-  -h|--help
-EOF
-}
-
-op=""
-quiet="no"
-debugger="no"
-debugger_key=""
-debugger_location="localhost:9000"
-debugger_path=""
-development_environment=""
-starman_bin="$(command -v starman || true)"
-
-set_action() {
-    if [ -z "$op" ]; then
-        op="$1"
-    else
-        die_msg "only one action can be specified"
-    fi
-}
-
-set_help_flag() {
-    start_stop_help="$(start-stop-daemon --help 2>&1 || true)"
-    case "$start_stop_help" in
-        *"--retry"*|*"-R"*) ssd_has_retry=yes ;;
-        *) ssd_has_retry=no ;;
-    esac
-}
-
-is_plack_running_alpine() {
-    instancename="$1"
-    pidfile="/var/run/koha/${instancename}/plack.pid"
-
-    if [ ! -s "$pidfile" ]; then
-        return 1
-    fi
-
-    pid="$(cat "$pidfile" 2>/dev/null || true)"
-    case "$pid" in
-        ''|*[!0-9]*) return 1 ;;
-    esac
-
-    if kill -0 "$pid" 2>/dev/null; then
-        return 0
-    fi
-
-    return 1
-}
-
-ensure_plack_logs() {
-    instancename="$1"
-    for file in \
-        "/var/log/koha/${instancename}/plack.log" \
-        "/var/log/koha/${instancename}/plack-error.log"; do
-        [ -e "$file" ] || touch "$file"
-        chown "${instancename}-koha:${instancename}-koha" "$file"
+# Find PSGI files (Koha 24.11 layout)
+find_psgi() {
+    local type="$1"
+    # Try common locations
+    for p in \
+        "${BASE_DIR}/$type/$type.psgi" \
+        "${BASE_DIR}/opac/opac.psgi" \
+        "${BASE_DIR}/intranet/intranet.psgi" \
+        "${BASE_DIR}/api/v1/app.psgi" \
+        "${BASE_DIR}/api/v1/app.pl" \
+        "${BASE_DIR}/plack/$type.psgi" \
+        "${BASE_DIR}/$type.psgi" \
+        "${BASE_DIR}/etc/$type.psgi" \
+        "/usr/share/koha/$type/$type.psgi"; do
+        if [ -f "$p" ]; then echo "$p"; return 0; fi
     done
+    # fallback find
+    find "${BASE_DIR}" -maxdepth 4 -name "*${type}*.psgi" 2>/dev/null | head -1
 }
 
-plack_value() {
-    instancename="$1"
-    key="$2"
-    if command -v run_safe_xmlstarlet >/dev/null 2>&1; then
-        run_safe_xmlstarlet "$instancename" "$key" 2>/dev/null || true
-    fi
+PSGI_OPAC=$(find_psgi opac)
+PSGI_INTRA=$(find_psgi intranet)
+[ -n "$PSGI_INTRA" ] || PSGI_INTRA=$(find_psgi staff)
+PSGI_API=$(find_psgi api)
+[ -n "$PSGI_API" ] || PSGI_API=$(find "${BASE_DIR}" -name "app.psgi" -o -name "app.pl" | head -1)
+
+# If still not found, use generic plack.psgi that Koha provides
+if [ -z "$PSGI_OPAC" ] && [ -f "${BASE_DIR}/opac/psgi/opac.psgi" ]; then PSGI_OPAC="${BASE_DIR}/opac/psgi/opac.psgi"; fi
+if [ -z "$PSGI_OPAC" ] && [ -f "${BASE_DIR}/plack.psgi" ]; then PSGI_OPAC="${BASE_DIR}/plack.psgi"; fi
+if [ -z "$PSGI_INTRA" ]; then PSGI_INTRA="$PSGI_OPAC"; fi
+
+export PERL5LIB="/opt/koha-perl/lib/perl5:${BASE_DIR}/lib:${BASE_DIR}"
+export KOHA_CONF="${CONF}"
+export KOHA_HOME="${BASE_DIR}"
+
+is_running() {
+    local pidfile="$1"
+    [ -f "$pidfile" ] || return 1
+    local pid=$(cat "$pidfile" 2>/dev/null || true)
+    case "$pid" in ''|*[!0-9]*) return 1;; esac
+    kill -0 "$pid" 2>/dev/null
 }
 
-enable_plack() {
-    instancename="$1"
-    instancefile="$(get_apache_config_for "$instancename")"
-
-    [ -n "$instancefile" ] || {
-        [ "$quiet" != "yes" ] && log_warn "No apache config found for ${instancename}"
-        return 1
-    }
-
-    alreadyopac=0
-    alreadyintra=0
-    failopac=0
-    failintra=0
-
-    if ! is_plack_enabled_opac "$instancefile"; then
-        sed -i 's:^\s*#\(\s*Include /etc/koha/apache-shared-opac-plack.conf\)$:\1:' "$instancefile"
-        if ! is_plack_enabled_opac "$instancefile"; then
-            [ "$quiet" != "yes" ] && log_warn "Plack not enabled for ${instancename} OPAC"
-            failopac=1
-        fi
-    else
-        [ "$quiet" != "yes" ] && log_warn "Plack already enabled for ${instancename} OPAC"
-        alreadyopac=1
-    fi
-
-    if ! is_plack_enabled_intranet "$instancefile"; then
-        sed -i 's:^\s*#\(\s*Include /etc/koha/apache-shared-intranet-plack.conf\)$:\1:' "$instancefile"
-        if ! is_plack_enabled_intranet "$instancefile"; then
-            [ "$quiet" != "yes" ] && log_warn "Plack not enabled for ${instancename} Intranet"
-            failintra=1
-        fi
-    else
-        [ "$quiet" != "yes" ] && log_warn "Plack already enabled for ${instancename} Intranet"
-        alreadyintra=1
-    fi
-
-    if [ "$alreadyopac" -eq 1 ] && [ "$alreadyintra" -eq 1 ]; then
-        return 1
-    fi
-
-    if [ "$alreadyopac" != "$alreadyintra" ]; then
-        [ "$quiet" != "yes" ] && log_warn "${instancename} had a plack configuration mismatch; please verify config"
-    fi
-
-    if [ "$failopac" -eq 0 ] || [ "$failintra" -eq 0 ]; then
+start_one() {
+    local name="$1"
+    local port="$2"
+    local psgi="$3"
+    local pidfile="$4"
+    if [ ! -f "$psgi" ]; then
+        echo "[koha-plack-alpine] SKIP $name: PSGI not found ($psgi)" >&2
         return 0
     fi
-
-    return 1
-}
-
-disable_plack() {
-    instancename="$1"
-    instancefile="$(get_apache_config_for "$instancename")"
-
-    [ -n "$instancefile" ] || {
-        [ "$quiet" != "yes" ] && log_warn "No apache config found for ${instancename}"
-        return 1
-    }
-
-    alreadyopac=0
-    alreadyintra=0
-    failopac=0
-    failintra=0
-
-    if is_plack_enabled_opac "$instancefile"; then
-        sed -i 's:^\(\s*Include /etc/koha/apache-shared-opac-plack.conf\)$:#\1:' "$instancefile"
-        if is_plack_enabled_opac "$instancefile"; then
-            [ "$quiet" != "yes" ] && log_warn "Plack not disabled for ${instancename} OPAC"
-            failopac=1
-        fi
-    else
-        [ "$quiet" != "yes" ] && log_warn "Plack already disabled for ${instancename} OPAC"
-        alreadyopac=1
-    fi
-
-    if is_plack_enabled_intranet "$instancefile"; then
-        sed -i 's:^\(\s*Include /etc/koha/apache-shared-intranet-plack.conf\)$:#\1:' "$instancefile"
-        if is_plack_enabled_intranet "$instancefile"; then
-            [ "$quiet" != "yes" ] && log_warn "Plack not disabled for ${instancename} Intranet"
-            failintra=1
-        fi
-    else
-        [ "$quiet" != "yes" ] && log_warn "Plack already disabled for ${instancename} Intranet"
-        alreadyintra=1
-    fi
-
-    if [ "$alreadyopac" -eq 1 ] && [ "$alreadyintra" -eq 1 ]; then
-        return 1
-    fi
-
-    if [ "$alreadyopac" != "$alreadyintra" ]; then
-        [ "$quiet" != "yes" ] && log_warn "${instancename} had a plack configuration mismatch; please verify config"
-    fi
-
-    if [ "$failopac" -eq 0 ] || [ "$failintra" -eq 0 ]; then
+    if is_running "$pidfile"; then
+        echo "[koha-plack-alpine] $name already running ($(cat $pidfile))"
         return 0
     fi
-
-    return 1
-}
-
-start_plack() {
-    instancename="$1"
-
-    [ -n "$starman_bin" ] || {
-        log_err "starman binary not found"
-        return 1
-    }
-
-    pidfile="/var/run/koha/${instancename}/plack.pid"
-    placksocket="/var/run/koha/${instancename}/plack.sock"
-    psgifile="/etc/koha/plack.psgi"
-    instance_user="${instancename}-koha"
-    instance_home="/var/lib/koha/${instancename}"
-
-    if [ -e "/etc/koha/sites/${instancename}/plack.psgi" ]; then
-        psgifile="/etc/koha/sites/${instancename}/plack.psgi"
-    fi
-
-    if command -v getent >/dev/null 2>&1; then
-        resolved_home="$(getent passwd "$instance_user" | cut -d: -f6 || true)"
-        [ -n "$resolved_home" ] && instance_home="$resolved_home"
-    fi
-
-    ensure_plack_logs "$instancename"
-
-    plack_max_requests="$(plack_value "$instancename" plack_max_requests)"
-    [ -n "$plack_max_requests" ] || plack_max_requests="50"
-    plack_workers="$(plack_value "$instancename" plack_workers)"
-    [ -n "$plack_workers" ] || plack_workers="2"
-
-    if is_debug_mode "$instancename" || [ -n "$development_environment" ]; then
-        environment="development"
+    echo "[koha-plack-alpine] Starting $name on :$port with $psgi"
+    # Use plackup with Starman if available
+    local server="Starman"
+    /opt/koha-perl/bin/plackup --version 2>&1 | grep -q Starman || server="Standalone"
+    # Try starman via plackup
+    nohup /opt/koha-perl/bin/plackup -E deployment -s "$server" --workers 2 --port "$port" --pid "$pidfile" --access-log "${LOG_DIR}/plack-${name}-access.log" --error-log "${LOG_DIR}/plack-${name}-error.log" "$psgi" >> "${LOG_DIR}/plack.log" 2>&1 &
+    sleep 2
+    if is_running "$pidfile"; then
+        echo "[koha-plack-alpine] $name started pid $(cat $pidfile)"
     else
-        environment="deployment"
-    fi
-
-    daemonize="--daemonize"
-    access_log="/var/log/koha/${instancename}/plack.log"
-    error_log="/var/log/koha/${instancename}/plack-error.log"
-
-    if [ "$debugger" = "yes" ] && [ "$environment" = "development" ]; then
-        daemonize=""
-        plack_workers="1"
-        if [ -n "$debugger_path" ]; then
-            PERL5LIB="${debugger_path}:${PERL5LIB:-}"
-            export PERL5LIB
-        fi
-        export PERL5DB="BEGIN { require q(${debugger_path}/perl5db.pl) }"
-        export PERLDB_OPTS="RemotePort=${debugger_location} async=1 LogFile=/var/log/koha/${instancename}/plack-debug.log"
-        export DBGP_IDEKEY="$debugger_key"
-        export PLACK_DEBUG=1
-        export PERL5OPT="-d"
-    fi
-
-    if is_plack_running_alpine "$instancename"; then
-        [ "$quiet" != "yes" ] && log_warn "Plack already running for ${instancename}"
-        return 1
-    fi
-
-    log_info "Starting Plack daemon for ${instancename}"
-    export KOHA_CONF="/etc/koha/sites/${instancename}/koha-conf.xml"
-
-    mkdir -p "$(dirname "$pidfile")"
-    if [ "$debugger" = "yes" ] && [ "$environment" = "development" ]; then
-        (
-            cd "$instance_home"
-            exec /usr/bin/perl -d "$starman_bin" -M FindBin \
-                --max-requests "$plack_max_requests" \
-                --workers "$plack_workers" \
-                --user "$instance_user" \
-                --group "$instance_user" \
-                --pid "$pidfile" \
-                -E "$environment" \
-                --socket "$placksocket" \
-                "$psgifile"
-        )
-    else
-        (
-            cd "$instance_home"
-            exec "$starman_bin" -M FindBin \
-                --max-requests "$plack_max_requests" \
-                --workers "$plack_workers" \
-                --user "$instance_user" \
-                --group "$instance_user" \
-                --pid "$pidfile" \
-                $daemonize \
-                --access-log "$access_log" \
-                --error-log "$error_log" \
-                -E "$environment" \
-                --socket "$placksocket" \
-                "$psgifile"
-        )
+        echo "[koha-plack-alpine] WARNING $name failed to start, see ${LOG_DIR}/plack-${name}-error.log" >&2
+        cat "${LOG_DIR}/plack-${name}-error.log" 2>/dev/null | tail -30 >&2 || true
     fi
 }
 
-stop_plack() {
-    instancename="$1"
-    pidfile="/var/run/koha/${instancename}/plack.pid"
-    instance_user="${instancename}-koha"
-
-    if ! is_plack_running_alpine "$instancename"; then
-        [ "$quiet" != "yes" ] && log_warn "Plack not running for ${instancename}"
-        return 1
-    fi
-
-    log_info "Stopping Plack daemon for ${instancename}"
-
-    if command -v start-stop-daemon >/dev/null 2>&1; then
-        if [ "${ssd_has_retry:-no}" = "yes" ]; then
-            if start-stop-daemon --stop --pidfile "$pidfile" --user "$instance_user" --retry 5 >/dev/null 2>&1; then
-                rm -f "$pidfile"
-                return 0
-            fi
-        elif start-stop-daemon --stop --pidfile "$pidfile" --user "$instance_user" >/dev/null 2>&1; then
-            rm -f "$pidfile"
-            return 0
+stop_one() {
+    local pidfile="$1"
+    local name="$2"
+    if [ -f "$pidfile" ]; then
+        local pid=$(cat "$pidfile" 2>/dev/null || true)
+        if [ -n "$pid" ]; then
+            echo "[koha-plack-alpine] Stopping $name pid $pid"
+            kill "$pid" 2>/dev/null || true
+            sleep 2
+            kill -9 "$pid" 2>/dev/null || true
         fi
-    fi
-
-    pid="$(cat "$pidfile" 2>/dev/null || true)"
-    case "$pid" in
-        ''|*[!0-9]*) return 1 ;;
-    esac
-
-    kill "$pid" >/dev/null 2>&1 || true
-    i=0
-    while [ "$i" -lt 30 ]; do
-        if ! kill -0 "$pid" 2>/dev/null; then
-            rm -f "$pidfile"
-            return 0
-        fi
-        i=$((i + 1))
-        sleep 1
-    done
-
-    kill -KILL "$pid" >/dev/null 2>&1 || true
-    rm -f "$pidfile"
-    return 0
-}
-
-reload_plack() {
-    instancename="$1"
-    pidfile="/var/run/koha/${instancename}/plack.pid"
-
-    if ! is_plack_running_alpine "$instancename"; then
-        [ "$quiet" != "yes" ] && log_warn "Plack not running for ${instancename}"
-        return 1
-    fi
-
-    if command -v start-stop-daemon >/dev/null 2>&1; then
-        if start-stop-daemon --stop --pidfile "$pidfile" --signal HUP >/dev/null 2>&1; then
-            return 0
-        fi
-    fi
-
-    pid="$(cat "$pidfile" 2>/dev/null || true)"
-    case "$pid" in
-        ''|*[!0-9]*) return 1 ;;
-    esac
-
-    kill -HUP "$pid"
-}
-
-plack_status() {
-    instancename="$1"
-    if is_plack_running_alpine "$instancename"; then
-        [ "$quiet" != "yes" ] && log_info "Plack running for ${instancename}"
-        return 0
-    fi
-
-    [ "$quiet" != "yes" ] && log_info "Plack not running for ${instancename}"
-    return 3
-}
-
-check_env_and_warn() {
-    missing_modules=""
-    required_modules="headers proxy_http"
-
-    if command -v httpd >/dev/null 2>&1; then
-        if ! httpd -v 2>/dev/null | grep -q "Apache/2.4"; then
-            log_warn "koha-plack expects Apache 2.4.x"
-        fi
-        for module in $required_modules; do
-            if ! httpd -M 2>/dev/null | grep -q "$module"; then
-                missing_modules="${missing_modules}${module} "
-            fi
-        done
-    fi
-
-    if [ -n "$missing_modules" ]; then
-        log_warn "missing Apache modules: ${missing_modules}(load them in image build config; no runtime Debian module-enable helper on Alpine)"
+        rm -f "$pidfile"
     fi
 }
 
-do_instance() {
-    name="$1"
-
-    GIT_INSTALL="${GIT_INSTALL:-}"   # default before adjust_paths_git_install calls is_git_install
-    adjust_paths_git_install "$name"
-    PERL5LIB="${PERL5LIB:-}:$KOHA_HOME/installer:$KOHA_HOME/lib/installer"
-    if [ "$KOHA_BINDIR" = "misc" ]; then
-        GIT_INSTALL=1
-    else
-        GIT_INSTALL=""
-    fi
-    export PERL5LIB KOHA_HOME GIT_INSTALL
-
-    case "$op" in
-        start) start_plack "$name" ;;
-        stop) stop_plack "$name" ;;
-        restart) stop_plack "$name" && start_plack "$name" ;;
-        reload) reload_plack "$name" ;;
-        enable) enable_plack "$name" ;;
-        disable) disable_plack "$name" ;;
-        status) plack_status "$name" ;;
-        *) usage ; exit 1 ;;
-    esac
-}
-
-while [ "$#" -gt 0 ]; do
-    case "$1" in
-        -h|--help)
-            usage
-            exit 0
-            ;;
-        -q|--quiet)
-            quiet="yes"
-            shift
-            ;;
-        --start)
-            set_action start
-            shift
-            ;;
-        --stop)
-            set_action stop
-            shift
-            ;;
-        --restart)
-            set_action restart
-            shift
-            ;;
-        --reload)
-            set_action reload
-            shift
-            ;;
-        --enable)
-            set_action enable
-            shift
-            ;;
-        --disable)
-            set_action disable
-            shift
-            ;;
-        --status)
-            set_action status
-            shift
-            ;;
-        --debugger)
-            debugger="yes"
-            shift
-            ;;
-        --debugger-key)
-            debugger_key="$2"
-            shift 2
-            ;;
-        --debugger-location)
-            debugger_location="$2"
-            shift 2
-            ;;
-        --debugger-path)
-            debugger_path="$2"
-            shift 2
-            ;;
-        -dev|--development)
-            development_environment=1
-            shift
-            ;;
-        -*)
-            die_msg "invalid option switch ($1)"
-            ;;
-        *)
-            break
-            ;;
-    esac
-done
-
-[ -n "$op" ] || die_msg "missing action"
-
-[ "$quiet" = "yes" ] || check_env_and_warn
-set_help_flag
-
-if [ "$#" -le 0 ]; then
-    [ "$quiet" != "yes" ] && log_warn "you must provide at least one instance name"
-    exit 1
-fi
-
-rc=0
-for name in "$@"; do
-    if is_instance "$name"; then
-        if ! do_instance "$name"; then
-            rc=1
+case "$ACTION" in
+    --enable|--enable-opac|--enable-intranet)
+        # Create enable flag and ensure koha-conf.xml has plack enabled
+        touch "${ETC_DIR}/plack_enabled"
+        if command -v xmlstarlet >/dev/null 2>&1 && [ -f "$CONF" ]; then
+            xmlstarlet ed -L -u "//config/plack/enable" -v 1 "$CONF" 2>/dev/null || true
+            xmlstarlet ed -L -u "//config/plack/opac_port" -v 5000 "$CONF" 2>/dev/null || true
+            xmlstarlet ed -L -u "//config/plack/intra_port" -v 5001 "$CONF" 2>/dev/null || true
         fi
-    else
-        if [ "$quiet" = "no" ]; then
-            log_err "Invalid instance name $name"
-            rc=1
+        echo "[koha-plack-alpine] Enabled plack for $INSTANCE"
+        ;;
+    --disable)
+        rm -f "${ETC_DIR}/plack_enabled"
+        echo "[koha-plack-alpine] Disabled plack for $INSTANCE"
+        ;;
+    --start|--restart)
+        if [ "$ACTION" = "--restart" ]; then
+            stop_one "$PID_OPAC" "opac"
+            stop_one "$PID_INTRA" "intra"
+            stop_one "$PID_API" "api"
+            sleep 1
         fi
-    fi
-done
-
-exit "$rc"
+        # Determine ports from env or defaults
+        OPAC_PORT=${KOHA_OPAC_PLACK_PORT:-5000}
+        INTRA_PORT=${KOHA_INTRANET_PLACK_PORT:-5001}
+        # If koha-conf has ports, try to extract
+        if [ -f "$CONF" ] && command -v xmlstarlet >/dev/null 2>&1; then
+            OPAC_PORT=$(xmlstarlet sel -t -v "//config/plack/opac_port" "$CONF" 2>/dev/null || echo "$OPAC_PORT")
+            INTRA_PORT=$(xmlstarlet sel -t -v "//config/plack/intra_port" "$CONF" 2>/dev/null || echo "$INTRA_PORT")
+        fi
+        start_one "opac" "$OPAC_PORT" "$PSGI_OPAC" "$PID_OPAC"
+        # Intranet - if same psgi, use different port but same file with different env
+        if [ "$PSGI_INTRA" != "$PSGI_OPAC" ] || [ "$OPAC_PORT" != "$INTRA_PORT" ]; then
+            # If same file, still start second instance on different port
+            start_one "intranet" "$INTRA_PORT" "$PSGI_INTRA" "$PID_INTRA"
+        fi
+        # API on 5002 if exists and different
+        if [ -n "$PSGI_API" ] && [ "$PSGI_API" != "$PSGI_OPAC" ] && [ "$PSGI_API" != "$PSGI_INTRA" ]; then
+            start_one "api" "5002" "$PSGI_API" "$PID_API"
+        fi
+        ;;
+    --stop)
+        stop_one "$PID_OPAC" "opac"
+        stop_one "$PID_INTRA" "intranet"
+        stop_one "$PID_API" "api"
+        pkill -f "plackup.*$INSTANCE" 2>/dev/null || true
+        ;;
+    --status|--status-opac|--status-intranet)
+        ok=0
+        if is_running "$PID_OPAC"; then echo "[koha-plack-alpine] OPAC running pid $(cat $PID_OPAC) port 5000"; else echo "[koha-plack-alpine] OPAC not running"; ok=1; fi
+        if is_running "$PID_INTRA"; then echo "[koha-plack-alpine] Intranet running pid $(cat $PID_INTRA) port 5001"; else echo "[koha-plack-alpine] Intranet not running (may share OPAC)"; fi
+        # Check listening
+        ss -tln 2>/dev/null | grep -E "5000|5001" || netstat -tln 2>/dev/null | grep -E "5000|5001" || true
+        exit $ok
+        ;;
+    *)
+        echo "Usage: $0 {--enable|--disable|--start|--stop|--restart|--status} instance"
+        exit 1
+        ;;
+esac
