@@ -59,11 +59,15 @@ services:
       - koha_lib:/var/lib/koha
       - koha_var_run:/var/run/koha
       - ./files-alpine/mariadb-ssl:/etc/mysql/ssl:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "${KOHA_OPAC_PORT:-8080}:8080"
       - "${KOHA_INTRANET_PORT:-8081}:8081"
     env_file: [env/.env]
     environment:
+      SEARCH_ENGINE: "Elasticsearch"
+      ELASTICSEARCH_SERVER: "host.docker.internal:9200"   
       PERL5LIB: /opt/koha-perl/lib/perl5:/kohadevbox/koha/lib:/usr/local/lib/perl5/site_perl:/usr/local/share/perl5/site_perl:/usr/lib/perl5/vendor_perl:/usr/share/perl5/vendor_perl
       PATH: /opt/koha-perl/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/kohadevbox/bin
       PERL_LOCAL_LIB_ROOT: /opt/koha-perl
@@ -73,7 +77,10 @@ services:
       KOHA_ALPINE_SKIP_YARN_INSTALL: ${KOHA_ALPINE_SKIP_YARN_INSTALL:-no}
       KOHA_ALPINE_ENABLE_CROND: ${KOHA_ALPINE_ENABLE_CROND:-yes}
       PERL_LWP_SSL_VERIFY_HOSTNAME: 1
-    networks: [knonikl, frontend]
+    networks: 
+      - knonikl
+      - opensearch-36_osearch
+      - frontend
     read_only: false
     tmpfs:
       - /tmp:mode=1777
@@ -120,9 +127,12 @@ volumes:
   koha_var_run:
 
 networks:
+  kohanet:
+      enable_ipv4: ${ENABLE_IPV4:-true}
+      enable_ipv6: ${ENABLE_IPV6:-false}
   knonikl:
-    name: knonikl
-    external: true
+      external: true
+  opensearch-36_osearch:
+      external: true
   frontend:
-    name: frontend
-    external: true
+      external: true
