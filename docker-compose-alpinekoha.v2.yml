@@ -38,24 +38,31 @@ services:
       - env/.env
     environment:
       KOHA_TARGET: ${KOHA_TARGET:-prod-runtime}
+      KOHA_PATH: /kohadevbox/koha
+      BUILD_DIR: /kohadevbox
+      KOHA_CONF: /etc/koha/sites/kohadev/koha-conf.xml
+      KOHA_INSTANCE: ${KOHA_INSTANCE:-kohadev}
+      KOHA_DOMAIN: ${KOHA_DOMAIN:-.127.0.0.1.nip.io}
+      KOHA_OPAC_PORT: ${KOHA_OPAC_PORT:-8080}
+      KOHA_INTRANET_PORT: ${KOHA_INTRANET_PORT:-8081}
+      DB_HOSTNAME: ${DB_HOSTNAME:-db}
+      DB_USER: ${DB_USER:-koha_kohadev}
+      DB_NAME: ${DB_NAME:-koha_kohadev}
+      DB_PASSWORD: ${DB_PASSWORD:-password}
       ELASTICSEARCH_SERVER: ${ELASTICSEARCH_SERVER:-os01:9200}
       ELASTIC_SERVER: ${ELASTIC_SERVER:-https://os01:9200}
       ELASTIC_OPTIONS: ${ELASTIC_OPTIONS}
+      PERL_LWP_SSL_VERIFY_HOSTNAME: ${PERL_LWP_SSL_VERIFY_HOSTNAME:-0}
       KOHA_ALPINE_SKIP_YARN_INSTALL: ${KOHA_ALPINE_SKIP_YARN_INSTALL:-yes}
       KOHA_ALPINE_SKIP_GIT_SETUP: ${KOHA_ALPINE_SKIP_GIT_SETUP:-yes}
       KOHA_ALPINE_SKIP_L10N: ${KOHA_ALPINE_SKIP_L10N:-yes}
       KOHA_ALPINE_SKIP_ELASTICSEARCH_WAIT: ${KOHA_ALPINE_SKIP_ELASTICSEARCH_WAIT:-yes}
       SKIP_RUNTIME_ASSET_COPY: ${SKIP_RUNTIME_ASSET_COPY:-yes}
-      KOHA_INSTANCE: ${KOHA_INSTANCE:-kohadev}
-      DB_HOSTNAME: ${DB_HOSTNAME:-db}
-      PERL_LWP_SSL_VERIFY_HOSTNAME: ${PERL_LWP_SSL_VERIFY_HOSTNAME:-0}
     ports:
       - "${KOHA_OPAC_PORT:-8080}:8080"
       - "${KOHA_INTRANET_PORT:-8081}:8081"
     volumes:
-      # Only mount Koha source read-only for prod - NO lib override!
       - ${SYNC_REPO:-./koha}:/kohadevbox/koha:ro
-      # Do NOT mount files-alpine/lib in prod - it shadows the built fixed version
     networks:
       - internal
       - osearch

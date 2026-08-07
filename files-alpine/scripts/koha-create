@@ -1,24 +1,24 @@
 #!/bin/sh
-# Alpine-native koha-create - patched v2026-08-06
-# Fixes: hardcoded /usr/share/koha paths, missing koha-create-dirs, Modern::Perl PERL5LIB
+# Alpine-native koha-create - patched v2026-08-07-final
+# Fixes: hardcoded /usr/share/koha paths, missing koha-create-dirs, Modern::Perl PERL5LIB, fd 3 busybox warning
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/kohadevbox/bin:$PATH"
 export PERL5LIB="${KOHA_PATH:-/kohadevbox/koha}/lib:/kohadevbox/koha/lib:/usr/local/lib/perl5/site_perl:/usr/local/share/perl5/site_perl:/usr/lib/perl5/vendor_perl:/usr/share/perl5/vendor_perl:${PERL5LIB:-}"
 set -eu
 
-[ -r /etc/default/koha-common ] && . /etc/default/koha-common
-[ -r /etc/koha/koha-sites.conf ] && . /etc/koha/koha-sites.conf
+[ -r /etc/default/koha-common ] && . /etc/default/koha-common 3>/dev/null || true
+[ -r /etc/koha/koha-sites.conf ] && . /etc/koha/koha-sites.conf 3>/dev/null || true
 
-# Robust koha-functions loader
+# Robust koha-functions loader - silence fd 3 close warning on Alpine ash
 if [ -f "${KOHA_PATH:-/kohadevbox/koha}/bin/koha-functions.sh" ]; then
-  . "${KOHA_PATH:-/kohadevbox/koha}/bin/koha-functions.sh"
+  . "${KOHA_PATH:-/kohadevbox/koha}/bin/koha-functions.sh" 3>/dev/null || true
 elif [ -f "/kohadevbox/koha/bin/koha-functions.sh" ]; then
-  . "/kohadevbox/koha/bin/koha-functions.sh"
+  . "/kohadevbox/koha/bin/koha-functions.sh" 3>/dev/null || true
 elif [ -f "${BUILD_DIR:-/kohadevbox}/koha/bin/koha-functions.sh" ]; then
-  . "${BUILD_DIR:-/kohadevbox}/koha/bin/koha-functions.sh"
+  . "${BUILD_DIR:-/kohadevbox}/koha/bin/koha-functions.sh" 3>/dev/null || true
 elif [ -f "/usr/share/koha/bin/koha-functions.sh" ]; then
-  . /usr/share/koha/bin/koha-functions.sh
+  . /usr/share/koha/bin/koha-functions.sh 3>/dev/null || true
 elif [ -f "/usr/local/bin/koha-functions.sh" ]; then
-  . /usr/local/bin/koha-functions.sh
+  . /usr/local/bin/koha-functions.sh 3>/dev/null || true
 else
   echo "[koha-create-alpine] WARNING: koha-functions.sh not found, continuing with builtins" >&2
   die() { echo "[koha-create-alpine] ERROR: $*" >&2; exit 1; }
@@ -48,7 +48,7 @@ rand_secret() {
 }
 
 rand_db_password() {
-    if command -v pwgen >/dev/null 2>&1; then pwgen -s -y -r ":'&\\<>/" 16 1; return 0; fi
+    if command -v pwgen >/dev/null 2>&1; then pwgen -s -y -r ":'&\<>/" 16 1; return 0; fi
     rand_secret | cut -c1-16
 }
 
@@ -63,7 +63,7 @@ getmysqlhost() {
 
 mysql_root_exec() {
     if [ -f /etc/mysql/koha-common.cnf ]; then
-        mysql --defaults-extra-file=/etc/mysql/koha-common.cnf "$@"
+        mysql --defaults-extra-file=/etc/mysql/koha-common.cnf "$@" 3>/dev/null || mysql --defaults-extra-file=/etc/mysql/koha-common.cnf "$@"
     else
         mysql -h "${KOHA_DB_HOST:-db}" -u root -p"${KOHA_DB_ROOT_PASSWORD:-${MARIADB_ROOT_PASSWORD:-}}" "$@" 2>/dev/null || \
         mysql -u root "$@"
@@ -72,12 +72,10 @@ mysql_root_exec() {
 
 esc_sed() { printf '%s' "$1" | sed -e 's/[\\&#]/\\&/g'; }
 
-# Self-contained create-dirs - does NOT call external koha-create-dirs
 alpine_create_dirs() {
     _inst="$1"
     _user="${_inst}-koha"
     log_info "Creating dirs for $_inst (alpine fallback, not calling koha-create-dirs)"
-
     for d in \
         "/etc/koha/sites/$_inst" \
         "/var/lib/koha/$_inst" \
@@ -93,7 +91,6 @@ alpine_create_dirs() {
         chown "$_user:$_user" "$d" 2>/dev/null || chown "$_user" "$d" 2>/dev/null || true
         chmod 750 "$d" 2>/dev/null || true
     done
-    # logs need wider
     chmod 770 "/var/log/koha/$_inst" 2>/dev/null || true
 }
 
@@ -158,7 +155,6 @@ enable_apache_site() {
     fi
 }
 
-# Defaults
 op="create"
 PASSWDFILE="/etc/koha/passwd"
 DOMAIN="${DOMAIN:-}"
@@ -240,7 +236,7 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
-[ -n "$CLO_CONFIGFILE" ] && [ -r "$CLO_CONFIGFILE" ] && . "$CLO_CONFIGFILE"
+[ -n "$CLO_CONFIGFILE" ] && [ -r "$CLO_CONFIGFILE" ] && . "$CLO_CONFIGFILE" 3>/dev/null || true
 [ "$#" -ge 1 ] || { usage; die "Missing instance name"; }
 name="$1"
 case "$name" in *[!A-Za-z0-9_-]*|'') die "Invalid instance name: $name" ;; esac
@@ -293,7 +289,6 @@ username="${name}-koha"
 if ! getent group "$username" >/dev/null 2>&1; then addgroup -S "$username" >/dev/null 2>&1 || addgroup "$username" >/dev/null || true; fi
 if ! getent passwd "$username" >/dev/null 2>&1; then adduser -S -D -H -h "/var/lib/koha/$name" -G "$username" -s /sbin/nologin "$username" >/dev/null 2>&1 || true; fi
 
-# Try real koha-create-dirs, but fallback to internal
 if ! /usr/sbin/koha-create-dirs "$name" 2>/dev/null; then
   if ! /usr/local/bin/koha-create-dirs "$name" 2>/dev/null; then
     log_warn "koha-create-dirs failed, using alpine internal dir creator"
@@ -313,7 +308,6 @@ if [ "$op" = "create" ]; then
     mysql_root_exec -e "FLUSH PRIVILEGES;" || true
 else
     log_info "Using existing database for $name - $mysqldb@$mysqlhost"
-    # Don't fail if DB check fails, just warn - TLS and permissions may be tricky
     mysql --skip-ssl --host="$mysqlhost" --user="$mysqluser" --password="$mysqlpwd" "$mysqldb" -e 'SELECT 1;' >/dev/null 2>&1 || log_warn "DB connectivity check failed, continuing"
 fi
 
@@ -325,11 +319,9 @@ else
     BCRYPT_SETTINGS=""
 fi
 
-# Ensure site template dir exists
 mkdir -p "/etc/koha/sites/$name"
 generate_config_file koha-conf-site.xml.in "/etc/koha/sites/$name/koha-conf.xml"
 generate_config_file log4perl-site.conf.in "/etc/koha/sites/$name/log4perl.conf"
-# Zebra configs may not exist in Alpine templates, make them optional
 generate_config_file zebra-biblios-dom-site.cfg.in "/etc/koha/sites/$name/zebra-biblios-dom.cfg" 2>/dev/null || echo "# stub" > "/etc/koha/sites/$name/zebra-biblios-dom.cfg"
 generate_config_file zebra-authorities-dom-site.cfg.in "/etc/koha/sites/$name/zebra-authorities-dom.cfg" 2>/dev/null || echo "# stub" > "/etc/koha/sites/$name/zebra-authorities-dom.cfg"
 generate_config_file zebra.passwd.in "/etc/koha/sites/$name/zebra.passwd" 2>/dev/null || echo "$name:$zebrapwd" > "/etc/koha/sites/$name/zebra.passwd"
