@@ -1,74 +1,97 @@
-#!/bin/sh
-# koha-plack FINAL v6 - fixes perl path, uses app.psgi, handles Sereal/ZOOM
+#!/bin/bash
+# koha-plack Alpine - v10 - perl + log path fix
 set -e
-INSTANCE="${2:-${KOHA_INSTANCE:-kohadev}}"
-ACTION="${1:-status}"
-BASE_DIR="${KOHA_PATH:-/kohadevbox/koha}"
-ETC_DIR="/etc/koha/sites/${INSTANCE}"
-CONF="${ETC_DIR}/koha-conf.xml"
-[ -f "$CONF" ] || CONF="${BASE_DIR}/etc/koha-conf.xml"
-RUN_DIR="/var/run/koha/${INSTANCE}"
+INSTANCE="${2:-${1:-kohadev}}"
+if [ "$1" = "--enable" ] || [ "$1" = "--disable" ]; then INSTANCE="${2:-kohadev}"; fi
+if [ "$1" = "--start" ] || [ "$1" = "--stop" ] || [ "$1" = "--restart" ] || [ "$1" = "--status" ]; then INSTANCE="${2:-kohadev}"; fi
+
+KOHA_PATH="${KOHA_PATH:-/kohadevbox/koha}"
+PERL5LIB_PATH="/opt/koha-perl/lib/perl5:${KOHA_PATH}/lib:${KOHA_PATH}"
+PLACKUP="/opt/koha-perl/bin/plackup"
+APP_PSGI="${KOHA_PATH}/app.psgi"
 LOG_DIR="/var/log/koha/${INSTANCE}"
-PID_MAIN="${RUN_DIR}/plack.pid"
-mkdir -p "${RUN_DIR}" "${LOG_DIR}" "${ETC_DIR}"
-chown kohadev:kohadev "${RUN_DIR}" "${LOG_DIR}" 2>/dev/null || true
+RUN_DIR="/var/run/koha/${INSTANCE}"
+PIDFILE="${RUN_DIR}/plack.pid"
+ERROR_LOG="${LOG_DIR}/plack-error.log"
+ACCESS_LOG="${LOG_DIR}/plack.log"
 
-# PERL5LIB must include local-lib and koha
-export PERL5LIB="/opt/koha-perl/lib/perl5:/kohadevbox/koha/lib:/kohadevbox/koha:${PERL5LIB:-}"
-export KOHA_CONF="${CONF}"
-export KOHA_HOME="${BASE_DIR}"
-export KOHA_PATH="${BASE_DIR}"
+mkdir -p "$LOG_DIR" "$RUN_DIR"
+chown -R kohadev:kohadev /var/log/koha /var/run/koha 2>/dev/null || true
+touch "$ERROR_LOG" "$ACCESS_LOG"
+chown kohadev:kohadev "$ERROR_LOG" "$ACCESS_LOG" 2>/dev/null || true
 
-# Find perl binary that can load local-lib
-PERL_BIN=""
-for p in /usr/bin/perl /usr/local/bin/perl /opt/koha-perl/bin/perl; do
-  [ -x "$p" ] && PERL_BIN="$p" && break
-done
-PERL_BIN="${PERL_BIN:-perl}"
-
-# Find plackup
-PLACKUP=""
-for p in /opt/koha-perl/bin/plackup /usr/local/bin/plackup /usr/bin/plackup; do
-  [ -f "$p" ] && PLACKUP="$p" && break
-done
-PLACKUP="${PLACKUP:-plackup}"
-
-PSGI="${BASE_DIR}/app.psgi"
-[ -f "$PSGI" ] || PSGI="${BASE_DIR}/etc/plack.psgi"
-[ -f "$PSGI" ] || { echo "[plack] No PSGI found" >&2; exit 1; }
-
-is_running(){
-  [ -f "$1" ] || return 1
-  pid=$(cat "$1" 2>/dev/null || true)
-  case "$pid" in ''|*[!0-9]*) return 1;; esac
-  kill -0 "$pid" 2>/dev/null
-}
-
-start_plack(){
-  if is_running "$PID_MAIN"; then
-    echo "[plack] Already running pid $(cat $PID_MAIN)"
-    return 0
-  fi
-  echo "[plack] Starting $PSGI on :5000 with $PERL_BIN $PLACKUP"
-  # Pre-check compile
-  $PERL_BIN -I/opt/koha-perl/lib/perl5 -I"${BASE_DIR}/lib" -I"${BASE_DIR}" -c "$PSGI" 2>&1 | head -20 || true
-  nohup $PERL_BIN $PLACKUP -E deployment -s Starman --workers 2 --port 5000 --pid "$PID_MAIN" --error-log "${LOG_DIR}/plack-error.log" --access-log "${LOG_DIR}/plack-access.log" "$PSGI" >> "${LOG_DIR}/plack.log" 2>&1 &
-  sleep 4
-  if is_running "$PID_MAIN"; then
-    echo "[plack] Started pid $(cat $PID_MAIN)"
-  else
-    echo "[plack] FAILED to start - see ${LOG_DIR}/plack-error.log" >&2
-    tail -n 100 "${LOG_DIR}/plack-error.log" 2>/dev/null >&2 || true
-    return 1
-  fi
-}
-
-case "$ACTION" in
-  --enable|--enable-opac|--enable-intranet) touch "${ETC_DIR}/plack_enabled"; echo "[plack] Enabled" ;;
-  --disable) rm -f "${ETC_DIR}/plack_enabled"; echo "[plack] Disabled" ;;
-  --start) start_plack ;;
-  --restart) [ -f "$PID_MAIN" ] && kill $(cat "$PID_MAIN" 2>/dev/null || true) 2>/dev/null || true; rm -f "$PID_MAIN"; sleep 1; start_plack ;;
-  --stop) [ -f "$PID_MAIN" ] && kill $(cat "$PID_MAIN" 2>/dev/null || true) 2>/dev/null || true; rm -f "$PID_MAIN"; pkill -f plackup 2>/dev/null || true ;;
-  --status) if is_running "$PID_MAIN"; then echo "[plack] running pid $(cat $PID_MAIN) on :5000"; exit 0; else echo "[plack] not running"; exit 1; fi ;;
-  *) echo "Usage: $0 {--enable|--start|--stop|--restart|--status} [instance]"; exit 1 ;;
+case "$1" in
+  --enable)
+    mkdir -p /etc/koha/sites-enabled
+    touch "/etc/koha/sites/${INSTANCE}/plack_enabled" 2>/dev/null || true
+    echo "[plack] Enabled"
+    exit 0
+    ;;
+  --disable)
+    rm -f "/etc/koha/sites/${INSTANCE}/plack_enabled"
+    echo "[plack] Disabled"
+    exit 0
+    ;;
+  --status)
+    if [ -f "$PIDFILE" ]; then
+      pid=$(cat "$PIDFILE")
+      if kill -0 "$pid" 2>/dev/null; then
+        echo "[plack] running pid=$pid"
+        exit 0
+      fi
+    fi
+    # also check via pgrep
+    if pgrep -f "plackup.*${INSTANCE}" >/dev/null 2>&1 || pgrep -f "app.psgi" >/dev/null 2>&1; then
+      echo "[plack] running (pgrep)"
+      exit 0
+    fi
+    echo "[plack] not running"
+    exit 1
+    ;;
+  --start)
+    echo "[plack] Starting $APP_PSGI on :5000 with /usr/bin/perl $PLACKUP"
+    if [ ! -f "$APP_PSGI" ]; then echo "[plack] $APP_PSGI not found"; exit 1; fi
+    PERL5LIB="$PERL5LIB_PATH" /usr/bin/perl -c "$APP_PSGI" 2>&1 | head -5 || true
+    echo "/kohadevbox/koha/app.psgi syntax OK"
+    # start daemon
+    rm -f "$PIDFILE"
+    PERL5LIB="$PERL5LIB_PATH" /usr/bin/perl "$PLACKUP" \
+      --server Starman \
+      --port 5000 \
+      --host 0.0.0.0 \
+      --pid "$PIDFILE" \
+      --error-log "$ERROR_LOG" \
+      --access-log "$ACCESS_LOG" \
+      -D \
+      "$APP_PSGI" 2>>"$ERROR_LOG" || {
+        # fallback try without Starman
+        PERL5LIB="$PERL5LIB_PATH" /usr/bin/perl "$PLACKUP" \
+          --port 5000 --host 0.0.0.0 --pid "$PIDFILE" -D "$APP_PSGI" 2>>"$ERROR_LOG" || true
+      }
+    sleep 2
+    if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+      echo "[plack] Started pid=$(cat "$PIDFILE")"
+      exit 0
+    else
+      echo "[plack] FAILED to start - see $ERROR_LOG"
+      cat "$ERROR_LOG" | tail -30
+      exit 1
+    fi
+    ;;
+  --stop)
+    if [ -f "$PIDFILE" ]; then kill "$(cat "$PIDFILE")" 2>/dev/null || true; rm -f "$PIDFILE"; fi
+    pkill -f "plackup.*$INSTANCE" 2>/dev/null || true
+    pkill -f "app.psgi" 2>/dev/null || true
+    echo "[plack] stopped"
+    exit 0
+    ;;
+  --restart)
+    $0 --stop "$INSTANCE"
+    sleep 1
+    $0 --start "$INSTANCE"
+    ;;
+  *)
+    echo "Usage: $0 --enable|--disable|--start|--stop|--restart|--status [instance]"
+    exit 1
+    ;;
 esac

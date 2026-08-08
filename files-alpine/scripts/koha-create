@@ -1,9 +1,7 @@
 #!/bin/sh
-# koha-create Alpine native - v6 - fixes use-db and koha-conf creation
+# koha-create Alpine - v10 - fixes plack.psgi + conf
 set -e
-INSTANCE="${1:-}"
-[ -z "$INSTANCE" ] && INSTANCE="kohadev"
-ACTION="create"
+INSTANCE="${1:-kohadev}"
 USE_DB=0
 [ "$2" = "--use-db" ] && USE_DB=1
 
@@ -11,33 +9,38 @@ ETC_ROOT="/etc/koha/sites/${INSTANCE}"
 KOHA_PATH="${KOHA_PATH:-/kohadevbox/koha}"
 BUILD_DIR="${BUILD_DIR:-/kohadevbox}"
 
-echo "[koha-create-alpine] Instance $INSTANCE (mode=$( [ $USE_DB -eq 1 ] && echo use || echo create))"
+if [ $USE_DB -eq 1 ]; then MODE="use"; else MODE="create"; fi
+echo "[koha-create-alpine] Instance $INSTANCE (mode=$MODE)"
 
 mkdir -p "${ETC_ROOT}" /var/lib/koha/${INSTANCE} /var/log/koha/${INSTANCE} /var/run/koha/${INSTANCE} /var/cache/koha/${INSTANCE}
 chown -R kohadev:kohadev /var/lib/koha/${INSTANCE} /var/log/koha/${INSTANCE} /var/run/koha/${INSTANCE} /var/cache/koha/${INSTANCE} 2>/dev/null || true
+mkdir -p /etc/koha /etc/koha/sites-enabled
 
-# Create koha-conf.xml from template if not exists
+# Dummy plack.psgi to prevent Debian koha-plack crash
+mkdir -p /etc/koha
+echo '1;' > /etc/koha/plack.psgi 2>/dev/null || true
+
+# Create koha-conf.xml
 if [ ! -f "${ETC_ROOT}/koha-conf.xml" ]; then
   TEMPLATE=""
-  for t in "${BUILD_DIR}/templates/koha-conf.xml" "/kohadevbox/templates/koha-conf.xml" "/etc/koha/koha-conf.xml" "${KOHA_PATH}/etc/koha-conf.xml" "${KOHA_PATH}/debian/templates/koha-conf-site.xml.in"; do
+  for t in "${BUILD_DIR}/templates/koha-conf.xml" "/kohadevbox/templates/koha-conf.xml" "/etc/koha/koha-conf.xml" "${KOHA_PATH}/etc/koha-conf.xml" "${KOHA_PATH}/debian/templates/koha-conf-site.xml.in" "/build/files-alpine/templates/koha-conf.xml"; do
     [ -f "$t" ] && TEMPLATE="$t" && break
   done
   if [ -n "$TEMPLATE" ]; then
-    cp "$TEMPLATE" "${ETC_ROOT}/koha-conf.xml"
-  else
+    cp "$TEMPLATE" "${ETC_ROOT}/koha-conf.xml" 2>/dev/null || true
+  fi
+  if [ ! -f "${ETC_ROOT}/koha-conf.xml" ]; then
     cat > "${ETC_ROOT}/koha-conf.xml" <<'EOXML'
 <config>
  <db_host>db</db_host>
  <db_port>3306</db_port>
- <db_name>koha_kohadev</db_name>
- <db_user>koha_kohadev</db_user>
- <db_pass>password</db_pass>
+ <db_name>__DB_NAME__</db_name>
+ <db_user>__DB_USER__</db_user>
+ <db_pass>__DB_PASS__</db_pass>
  <memcached_servers>memcached:11211</memcached_servers>
- <memcached_namespace>koha_kohadev</memcached_namespace>
+ <memcached_namespace>__DB_NAME__</memcached_namespace>
  <zebra_biblioserver>localhost:9998/biblios</zebra_biblioserver>
  <zebra_authoritiesserver>localhost:9998/authorities</zebra_authoritiesserver>
- <zebra_biblioservers>localhost:9998/biblios</zebra_biblioservers>
- <zebra_authoritiesservers>localhost:9998/authorities</zebra_authoritiesservers>
  <intranetdir>/kohadevbox/koha</intranetdir>
  <opacdir>/kohadevbox/koha/opac</opacdir>
  <koha_db_dir>/var/lib/koha/kohadev</koha_db_dir>
@@ -46,23 +49,21 @@ if [ ! -f "${ETC_ROOT}/koha-conf.xml" ]; then
 </config>
 EOXML
   fi
-  # Replace placeholders
-  sed -i "s/__DB_HOST__/db/g; s/__DB_USER__/koha_${INSTANCE}/g; s/__DB_PASS__/password/g; s/__DB_NAME__/koha_${INSTANCE}/g; s/__INSTANCE__/koha_${INSTANCE}/g; s/kohadev/${INSTANCE}/g" "${ETC_ROOT}/koha-conf.xml" 2>/dev/null || true
-  # Ensure proper XML vars from env
-  if [ -n "$KOHA_DB_HOST" ]; then sed -i "s|<db_host>.*</db_host>|<db_host>${KOHA_DB_HOST}</db_host>|g" "${ETC_ROOT}/koha-conf.xml"; fi
-  if [ -n "$MYSQL_HOST" ]; then sed -i "s|<db_host>.*</db_host>|<db_host>${MYSQL_HOST}</db_host>|g" "${ETC_ROOT}/koha-conf.xml"; fi
+  # replace placeholders
+  DBNAME="koha_${INSTANCE}"
+  DBUSER="koha_${INSTANCE}"
+  DBPASS="${MYSQL_PASSWORD:-${KOHA_DB_PASSWORD:-password}}"
+  DBHOST="${MYSQL_HOST:-${KOHA_DB_HOST:-db}}"
+  sed -i "s/__DB_HOST__/${DBHOST}/g; s/__DB_USER__/${DBUSER}/g; s/__DB_PASS__/${DBPASS}/g; s/__DB_NAME__/${DBNAME}/g; s/__INSTANCE__/${DBNAME}/g; s/kohadev/${INSTANCE}/g" "${ETC_ROOT}/koha-conf.xml" 2>/dev/null || true
+  # env overrides
+  [ -n "$KOHA_DB_HOST" ] && sed -i "s|<db_host>.*</db_host>|<db_host>${KOHA_DB_HOST}</db_host>|g" "${ETC_ROOT}/koha-conf.xml" || true
+  [ -n "$MYSQL_HOST" ] && sed -i "s|<db_host>.*</db_host>|<db_host>${MYSQL_HOST}</db_host>|g" "${ETC_ROOT}/koha-conf.xml" || true
 fi
 
-ln -sf "${ETC_ROOT}/koha-conf.xml" /etc/koha/sites/${INSTANCE}/koha-conf.xml 2>/dev/null || true
-ln -sf "${ETC_ROOT}/koha-conf.xml" /etc/koha/koha-conf.xml 2>/dev/null || true
+ln -sf "${ETC_ROOT}/koha-conf.xml" "/etc/koha/sites/${INSTANCE}/koha-conf.xml" 2>/dev/null || true
+ln -sf "${ETC_ROOT}/koha-conf.xml" "/etc/koha/koha-conf.xml" 2>/dev/null || true
+ln -sf "${ETC_ROOT}" "/etc/koha/sites-enabled/${INSTANCE}" 2>/dev/null || true
+touch "${ETC_ROOT}/plack_enabled" "${ETC_ROOT}/worker_enabled" 2>/dev/null || true
 
-# Ensure plack.psgi dummy exists to prevent crash
-echo "1;" > /etc/koha/plack.psgi 2>/dev/null || true
-
-# Enable instance
-mkdir -p /etc/koha/sites-enabled
-ln -sf "${ETC_ROOT}" /etc/koha/sites-enabled/${INSTANCE} 2>/dev/null || true
-touch "${ETC_ROOT}/plack_enabled"
-
-echo "[koha-create-alpine] Instance ${INSTANCE} ready"
+echo "[koha-create-alpine] Instance ${INSTANCE} ready (mode=$MODE)"
 exit 0

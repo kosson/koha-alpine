@@ -1,0 +1,17 @@
+log4perl.rootLogger=INFO, KOHAFILE, STDERR
+log4perl.logger.intranet=INFO, KOHAFILE
+log4perl.logger.opac=INFO, KOHAFILE
+log4perl.logger.api=INFO, KOHAFILE
+
+log4perl.appender.KOHAFILE=Log::Log4perl::Appender::File
+log4perl.appender.KOHAFILE.filename=/var/log/koha/__KOHASITE__/koha.log
+log4perl.appender.KOHAFILE.mode=append
+log4perl.appender.KOHAFILE.layout=PatternLayout
+log4perl.appender.KOHAFILE.layout.ConversionPattern=[%d] [%p] %m %l %n
+
+log4perl.appender.STDERR=Log::Log4perl::Appender::Screen
+log4perl.appender.STDERR.stderr=1
+log4perl.appender.STDERR.layout=PatternLayout
+log4perl.appender.STDERR.layout.ConversionPattern=[%d] [%p] %m %n
+
+log4perl.logger.Koha.SearchEngine.Elasticsearch=DEBUG, KOHAFILE

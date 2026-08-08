@@ -1,0 +1,11 @@
+# Minimal query parser config for Koha
+# Copy of Koha's default
+---
+query_parser:
+  id: default
+  class: Koha::SearchEngine::QueryParser
+  config:
+    query_class: CQL::Parser
+    cql_config: /kohadevbox/koha/etc/zebradb/cql.properties
+    pqf_config: /kohadevbox/koha/etc/zebradb/pqf.properties
+    use_query_parser: 1
