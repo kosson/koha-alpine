@@ -58,6 +58,9 @@ services:
         env_file:
             - env/.env
         environment:
+            PERL5LIB: /opt/koha-perl/lib/perl5:/kohadevbox/koha:/kohadevbox/koha/lib:/kohadevbox/qa-test-tools
+            KOHA_CONF: /etc/koha/sites/kohadev/koha-conf.xml
+            MEMCACHED_SERVERS: memcached:11211
             COVERAGE: ${COVERAGE:-}
             CPAN: ${CPAN:-no}
             EXTRA_CPAN: ${EXTRA_CPAN:-}

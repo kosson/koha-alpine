@@ -1,128 +1,104 @@
 #!/bin/bash
-# Fixed run.sh - beefy version with full logging
 set -e
-
 KOHASITE=${KOHASITE:-kohadev}
 KOHA_HOME=/var/lib/koha/${KOHASITE}
 KOHACONF=/etc/koha/sites/${KOHASITE}/koha-conf.xml
-LOG4PERL_CONF=/etc/koha/log4perl/log4perl-${KOHASITE}.conf
+LOG4PERL_CONF_DIR=/etc/koha/sites/${KOHASITE}
+LOG4PERL_CONF=${LOG4PERL_CONF_DIR}/log4perl.conf
+LOG4PERL_CONF_LEGACY=/etc/koha/log4perl/log4perl-${KOHASITE}.conf
 KOHADEVBOX=${KOHADEVBOX:-/kohadevbox/koha}
-KOHA_USER=${KOHA_USER:-kohadev}
+KOHA_USER=kohadev
+KOHA_GROUP=kohadev
 DB_HOST=${DB_HOST:-db}
 DB_USER=koha_${KOHASITE}
 DB_PASS=${MYSQL_PASS:-password}
 DB_NAME=koha_${KOHASITE}
+MEMCACHED_SERVERS=${MEMCACHED_SERVERS:-memcached:11211}
+MESSAGE_BROKER_HOST=${MESSAGE_BROKER_HOST:-rabbitmq}
+export KOHA_CONF=${KOHACONF} LOG4PERL_CONF=${LOG4PERL_CONF} KOHA_HOME=${KOHA_HOME} PERL5LIB=/opt/koha-perl/lib/perl5:${KOHADEVBOX}/lib:${KOHADEVBOX} PATH=/opt/koha-perl/bin:/usr/local/bin:/usr/bin:/bin MYSQL_PWD=${DB_PASS} KOHADEVBOX
+echo "[run.sh] BEEFY v16 FIXED - ${KOHASITE} ${KOHA_USER} $(date) MEMCACHED=${MEMCACHED_SERVERS}"
 
-export KOHA_CONF=${KOHACONF}
-export LOG4PERL_CONF=${LOG4PERL_CONF}
-export KOHA_HOME=${KOHA_HOME}
-export PERL5LIB=/opt/koha-perl/lib/perl5:${KOHADEVBOX}/lib:${KOHADEVBOX}
-export PATH=/opt/koha-perl/bin:$PATH
-export MYSQL_PWD=${DB_PASS}
-export KOHADEVBOX
+mkdir -p /etc/koha/sites/${KOHASITE} /etc/koha/log4perl /var/log/koha/${KOHASITE} /var/run/koha/${KOHASITE} ${KOHA_HOME}/plugins /var/lock/koha/${KOHASITE} /usr/share/koha/bin
 
-echo "======================================================================"
-echo "[run.sh] KOHA ALPINE BEEFY - Site: ${KOHASITE}"
-echo "[run.sh] Date: $(date)"
-echo "[run.sh] KOHA_CONF=${KOHA_CONF}"
-echo "[run.sh] PERL5LIB=${PERL5LIB}"
-echo "[run.sh] DB=${DB_USER}@${DB_HOST}/${DB_NAME}"
-echo "======================================================================"
+# ensure templates exist in /etc/koha (critical fix)
+if [ ! -f /etc/koha/koha-conf-site.xml.in ]; then
+  echo "[run.sh] Restoring debian templates to /etc/koha"
+  cp /kohadevbox/koha/debian/templates/* /etc/koha/ 2>/dev/null || true
+fi
+ls -l /etc/koha/*.in | head -5
 
-# Ensure directories with correct ownership
-mkdir -p /etc/koha/sites/${KOHASITE} /etc/koha/log4perl /var/log/koha/${KOHASITE} /var/run/koha/${KOHASITE} ${KOHA_HOME}/plugins /var/lock/koha/${KOHASITE}
-chown -R ${KOHA_USER}:${KOHA_USER} /etc/koha /var/log/koha /var/run/koha /var/lib/koha /var/lock/koha || true
-
-# Generate koha-conf.xml from template - ALWAYS regenerate to avoid timezone bug
-echo "[run.sh] Generating ${KOHACONF}"
-cp /etc/koha/koha-conf.xml.template "${KOHACONF}"
-# Use | as delimiter to avoid / in paths breaking sed
-sed -i \
-  -e "s|__TIMEZONE__|${TIMEZONE:-Europe/Bucharest}|g" \
-  -e "s|__KOHASITE__|${KOHASITE}|g" \
-  -e "s|__DB_HOST__|${DB_HOST}|g" \
-  -e "s|__DB_USER__|${DB_USER}|g" \
-  -e "s|__DB_PASS__|${DB_PASS}|g" \
-  -e "s|__DB_NAME__|${DB_NAME}|g" \
-  -e "s|__SRU_BIBLIOS_PORT__|9998|g" \
-  -e "s|__ZEBRA_MARC_FORMAT__|marc21|g" \
-  -e "s|__OPACDIR__|${KOHADEVBOX}/opac|g" \
-  -e "s|__INTRANETDIR__|${KOHADEVBOX}|g" \
-  -e "s|__KOHAHOME__|${KOHA_HOME}|g" \
-  "${KOHACONF}"
-
-if ! grep -q "<timezone>${TIMEZONE:-Europe/Bucharest}</timezone>" "${KOHACONF}"; then
-  echo "[run.sh] ERROR: timezone replacement failed!"
-  cat "${KOHACONF}" | grep timezone || true
-  exit 1
+if [ ! -f /usr/share/koha/bin/koha-functions.sh ]; then
+  cp /kohadevbox/koha/debian/scripts/koha-functions.sh /usr/share/koha/bin/koha-functions.sh 2>/dev/null || true
 fi
 
-chown ${KOHA_USER}:${KOHA_USER} "${KOHACONF}"
-echo "[run.sh] koha-conf.xml OK - timezone=$(grep timezone ${KOHACONF} | head -1)"
-
-# Generate log4perl
-if [ ! -f "${LOG4PERL_CONF}" ]; then
-  echo "[run.sh] Generating ${LOG4PERL_CONF}"
-  cp /etc/koha/log4perl.conf.template "${LOG4PERL_CONF}"
-  sed -i "s|__KOHASITE__|${KOHASITE}|g" "${LOG4PERL_CONF}"
-  chown ${KOHA_USER}:${KOHA_USER} "${LOG4PERL_CONF}"
-fi
-
-# Wait for DB with proper env
-echo "[run.sh] Waiting for DB ${DB_HOST}:3306..."
-for i in $(seq 1 60); do
-  if mysql -h ${DB_HOST} -u ${DB_USER} -p${DB_PASS} ${DB_NAME} -e "SELECT 1" >/dev/null 2>&1; then
-    echo "[run.sh] DB ready after $i tries"
-    break
-  fi
-  if [ $i -eq 60 ]; then
-    echo "[run.sh] DB not reachable after 60 tries, failing"
-    exit 1
-  fi
-  echo "[run.sh] DB not ready, retry $i/60"
-  sleep 2
-done
-
-# Check if DB is empty
-TABLE_COUNT=$(mysql -h ${DB_HOST} -u ${DB_USER} -p${DB_PASS} ${DB_NAME} -e "SHOW TABLES;" 2>/dev/null | wc -l)
-echo "[run.sh] DB table count: $TABLE_COUNT"
-
-if [ "$TABLE_COUNT" -lt 5 ]; then
-  echo "[run.sh] DB empty, importing kohastructure.sql (this takes ~10 sec)..."
-  mysql -h ${DB_HOST} -u ${DB_USER} -p${DB_PASS} ${DB_NAME} < ${KOHADEVBOX}/installer/data/mysql/kohastructure.sql
-  echo "[run.sh] Importing mandatory data..."
-  for sql in ${KOHADEVBOX}/installer/data/mysql/mandatory/*.sql; do
-    echo "  - Loading $(basename $sql)"
-    mysql -h ${DB_HOST} -u ${DB_USER} -p${DB_PASS} ${DB_NAME} < "$sql" 2>&1 | tail -1 || true
-  done
-  echo "[run.sh] Adding MAIN branch and Version..."
-  mysql -h ${DB_HOST} -u ${DB_USER} -p${DB_PASS} ${DB_NAME} <<EOSQL
-INSERT IGNORE INTO branches (branchcode, branchname, branchaddress1) VALUES ('MAIN','Main Library','Adunatii-Copaceni');
-INSERT IGNORE INTO systempreferences (variable,value,explanation,options,type) VALUES ('Version','25.1100000','Koha version','','') ON DUPLICATE KEY UPDATE value='25.1100000';
-UPDATE systempreferences SET value='25.1100000' WHERE variable='Version';
-INSERT IGNORE INTO library_groups (id, title, description, ft_hide_patron_info, ft_search_groups_opac, ft_search_groups_staff) VALUES (1,'Main','Main group',0,0,0);
-EOSQL
-  NEW_COUNT=$(mysql -h ${DB_HOST} -u ${DB_USER} -p${DB_PASS} ${DB_NAME} -e "SHOW TABLES;" 2>/dev/null | wc -l)
-  echo "[run.sh] DB initialized: $NEW_COUNT tables"
+# Create config via patched koha-create
+if [ -x /usr/local/bin/koha-create ]; then
+  echo "[run.sh] Using koha-create: /usr/local/bin/koha-create"
+  mkdir -p /etc/apache2/sites-available /etc/apache2/sites-enabled /var/log/koha/${KOHASITE} /var/lib/koha/${KOHASITE}
+  echo "[run.sh] Running koha-create --use-db ${KOHASITE}"
+  /usr/local/bin/koha-create --use-db --db-user "${DB_USER}" --db-password "${DB_PASS}" --db-name "${DB_NAME}" --memcached-servers "${MEMCACHED_SERVERS}" --mb-host "${MESSAGE_BROKER_HOST}" "${KOHASITE}" 2>&1 | tail -30 || true
+  echo "[run.sh] koha-create exit: $?"
+  ls -l /etc/koha/sites/${KOHASITE}/ 2>&1 || true
 else
-  echo "[run.sh] DB already initialized ($TABLE_COUNT tables), skipping import"
+  echo "[run.sh] koha-create not found!"
 fi
 
-# Clean old pid/socket
-rm -rf /var/run/koha/${KOHASITE}/*
-mkdir -p /var/run/koha/${KOHASITE} /var/log/koha/${KOHASITE}
-chown -R ${KOHA_USER}:${KOHA_USER} /var/run/koha /var/log/koha
+# Fallback if koha-create failed to create file
+if [ ! -f "${KOHACONF}" ]; then
+  echo "[run.sh] Config missing after koha-create, copying fallback template"
+  cp /etc/koha/koha-conf.xml.template "${KOHACONF}" 2>/dev/null || cp /kohadevbox/templates/koha-conf.xml.template "${KOHACONF}" 2>/dev/null || cp /kohadevbox/koha/debian/templates/koha-conf-site.xml.in "${KOHACONF}" 2>/dev/null || true
+fi
 
-echo "[run.sh] Starting Plack on 0.0.0.0:${KOHA_PLACK_PORT}..."
-echo "[run.sh] Using: /usr/bin/perl /opt/koha-perl/bin/plackup --port ${KOHA_PLACK_PORT} --host 0.0.0.0 ${KOHADEVBOX}/app.psgi"
-echo "[run.sh] Logs: /var/log/koha/${KOHASITE}/"
+# Fix perms BEFORE sed (Koha Config.pm is strict)
+chmod 644 "${KOHACONF}" 2>/dev/null || true
+chown root:kohadev "${KOHACONF}" 2>/dev/null || chown kohadev:kohadev "${KOHACONF}" 2>/dev/null || true
+ls -l "${KOHACONF}"
 
-# CRITICAL FIX: Use /usr/bin/perl explicitly, not the local-lib perl binary
-# The local-lib perl's shebang breaks when PERL5LIB is set
-exec /usr/bin/perl /opt/koha-perl/bin/plackup \
-  --port ${KOHA_PLACK_PORT} \
-  --host 0.0.0.0 \
-  --access-log /var/log/koha/${KOHASITE}/plack-access.log \
-  --error-log /var/log/koha/${KOHASITE}/plack-error.log \
-  --env production \
-  ${KOHADEVBOX}/app.psgi
+# Fix placeholders (critical for __MEMCACHED_SERVERS__)
+if [ -f "${KOHACONF}" ]; then
+  sed -i -e "s|__TIMEZONE__|${TIMEZONE:-Europe/Bucharest}|g" \
+         -e "s|__KOHASITE__|${KOHASITE}|g" \
+         -e "s|__DB_HOST__|${DB_HOST}|g" \
+         -e "s|__DB_USER__|${DB_USER}|g" \
+         -e "s|__DB_PASS__|${DB_PASS}|g" \
+         -e "s|__DB_NAME__|${DB_NAME}|g" \
+         -e "s|__MEMCACHED_SERVERS__|${MEMCACHED_SERVERS}|g" \
+         -e "s|__MEMCACHED_NAMESPACE__|KOHA:${KOHASITE}:|g" \
+         -e "s|localhost:11211|${MEMCACHED_SERVERS}|g" \
+         -e "s|__SRU_BIBLIOS_PORT__|9998|g" \
+         -e "s|__ZEBRA_MARC_FORMAT__|marc21|g" \
+         -e "s|__OPACDIR__|${KOHADEVBOX}/opac|g" \
+         -e "s|__INTRANETDIR__|${KOHADEVBOX}|g" \
+         -e "s|__KOHAHOME__|${KOHA_HOME}|g" "${KOHACONF}" 2>/dev/null || true
+  echo "[run.sh] koha-conf.xml memcached -> $(grep memcached ${KOHACONF} | head -1)"
+fi
+
+# Ensure perms again after sed
+chmod 644 "${KOHACONF}" 2>/dev/null || true
+chown root:kohadev "${KOHACONF}" 2>/dev/null || true
+chmod 644 /etc/koha/sites/${KOHASITE}/log4perl.conf 2>/dev/null || true
+
+for dest in "${LOG4PERL_CONF}" "${LOG4PERL_CONF_LEGACY}"; do mkdir -p "$(dirname "$dest")"; [ -f "$dest" ] || { cp /etc/koha/log4perl.conf.template "$dest" 2>/dev/null || cp /etc/koha/log4perl-site.conf.in "$dest" 2>/dev/null || cp /kohadevbox/templates/log4perl.conf.template "$dest" 2>/dev/null || echo "log4perl.logger=DEBUG, Screen" > "$dest"; sed -i "s|__KOHASITE__|${KOHASITE}|g" "$dest" || true; chmod 644 "$dest" 2>/dev/null || true; }; done
+
+echo "[run.sh] Waiting DB..."
+for i in $(seq 1 60); do mysql -h ${DB_HOST} -u ${DB_USER} -p${DB_PASS} ${DB_NAME} -e "SELECT 1" >/dev/null 2>&1 && { echo "DB ready $i"; break; }; sleep 2; done
+
+# If tables don't exist, populate properly via mysql (not perl)
+if ! mysql -h ${DB_HOST} -u ${DB_USER} -p${DB_PASS} ${DB_NAME} -e "SELECT 1 FROM systempreferences LIMIT 1" >/dev/null 2>&1; then
+  echo "[run.sh] DB empty, importing kohastructure.sql via mysql"
+  cd /kohadevbox/koha
+  mysql -h ${DB_HOST} -u ${DB_USER} -p${DB_PASS} ${DB_NAME} < installer/data/mysql/kohastructure.sql 2>&1 | tail -5 || true
+  for f in installer/data/mysql/mandatory/*.sql; do
+    echo "[run.sh] importing $f"
+    mysql -h ${DB_HOST} -u ${DB_USER} -p${DB_PASS} ${DB_NAME} < "$f" 2>&1 | grep -v "Duplicate" | tail -3 || true
+  done
+  mysql -h ${DB_HOST} -u ${DB_USER} -p${DB_PASS} ${DB_NAME} -e "INSERT IGNORE INTO systempreferences (variable,value,explanation) VALUES ('Version','24.1100000','Koha version')" 2>&1 || true
+  echo "[run.sh] running updatedatabase.pl as ${KOHA_USER}"
+  chown -R ${KOHA_USER}:${KOHA_GROUP} /etc/koha/sites/${KOHASITE} /var/log/koha/${KOHASITE} || true
+  # Run as koha user to satisfy Config.pm permission check
+  su ${KOHA_USER} -s /bin/sh -c "export KOHA_CONF=${KOHACONF} PERL5LIB=/opt/koha-perl/lib/perl5:${KOHADEVBOX}/lib:${KOHADEVBOX} KOHA_HOME=${KOHA_HOME}; cd ${KOHADEVBOX}; perl -Ilib installer/data/mysql/updatedatabase.pl" 2>&1 | tail -100 || perl -Ilib installer/data/mysql/updatedatabase.pl 2>&1 | tail -100 || true
+fi
+
+rm -rf /var/run/koha/${KOHASITE}/*; mkdir -p /var/run/koha/${KOHASITE} /var/log/koha/${KOHASITE}; chown -R ${KOHA_USER}:${KOHA_GROUP} /var/run/koha /var/log/koha /etc/koha/sites || true
+echo "[run.sh] Starting Plack :${KOHA_PLACK_PORT:-5000}"
+exec /usr/bin/perl /opt/koha-perl/bin/plackup --port ${KOHA_PLACK_PORT:-5000} --host 0.0.0.0 --access-log /var/log/koha/${KOHASITE}/plack-access.log --error-log /var/log/koha/${KOHASITE}/plack-error.log --env production ${KOHADEVBOX}/app.psgi

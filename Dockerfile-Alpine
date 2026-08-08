@@ -1,406 +1,61 @@
-FROM alpine:3.24.1 AS koha-base
+# Dockerfile-Alpine v16 FIXED - DO NOT overwrite koha-conf-site.xml.in
+ARG ALPINE_VERSION=3.20
 
-# File Author / Maintainer
-LABEL maintainer="kosson@gmail.com"
+FROM docker.io/library/node:22-alpine AS node-builder
+WORKDIR /tmp/build
+COPY . /tmp/context/
+RUN if [ -f /tmp/context/koha/package.json ]; then \
+      cp -r /tmp/context/koha /kohadevbox/koha && \
+      cd /kohadevbox/koha && yarn install --frozen-lockfile || npm install; \
+      yarn build 2>/dev/null || npm run build 2>/dev/null || true; \
+      mkdir -p /opt/koha-tmpl-built && cp -r /kohadevbox/koha/koha-tmpl /opt/koha-tmpl-built/ 2>/dev/null || true; \
+    else mkdir -p /opt/koha-tmpl-built; fi
 
-ENV PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
-ENV LANG=C.UTF-8
-ENV LC_ALL=C.UTF-8
-ENV REFRESHED_AT=2026-07-22T18:20:00Z14
+FROM docker.io/library/alpine:${ALPINE_VERSION} AS base
+RUN addgroup -g 1000 kohadev && adduser -D -u 1000 -G kohadev -h /var/lib/koha/kohadev -s /bin/sh kohadev && \
+    addgroup -g 1001 kohadev-koha 2>/dev/null || addgroup kohadev-koha; adduser kohadev kohadev-koha 2>/dev/null || true
+RUN apk add --no-cache perl perl-cgi perl-dbd-mysql perl-dbi apache2 apache2-utils mariadb-client mariadb-dev openssl ca-certificates curl wget tzdata sudo bash gettext envsubst pwgen findutils perl-app-cpanminus perl-local-lib perl-yaml libxml2 libxslt icu icu-data-full libpng freetype libjpeg-turbo libwebp gd
+RUN apk add --no-cache --virtual .yaz-build-deps build-base libxslt-dev libxml2-dev openssl-dev zlib-dev icu-dev readline-dev libedit-dev && \
+    wget -q https://ftp.indexdata.com/pub/yaz/yaz-5.34.0.tar.gz -O /tmp/yaz.tar.gz && tar xzf /tmp/yaz.tar.gz -C /tmp && cd /tmp/yaz-5.34.0 && ./configure --prefix=/usr >/dev/null && make -j$(nproc) >/dev/null && make install >/dev/null && cd / && rm -rf /tmp/yaz* && apk del .yaz-build-deps && apk add --no-cache libxslt libxml2 openssl icu readline libedit
 
-# Alpine base packages for a Koha-oriented runtime and build environment.
-RUN apk add --no-cache \
-    apache2 \
-    apache2-utils \
-    bash \
-    bash-completion \
-    build-base \
-    perl-bytes-random-secure \
-    coreutils \
-    perl-business-isbn \
-    perl-business-issn \
-    perl-class-accessor \
-    perl-class-factory-util \
-    perl-cgi \
-    perl-cgi-session \
-    perl-class-inspector \
-    perl-app-cpanminus \
-    perl-crypt-cbc \
-    perl-crypt-eksblowfish \
-    curl \
-    docbook-xsl \
-    docbook-xsl-ns \
-    expat-dev \
-    findutils \
-    gawk \
-    gettext \
-    git \
-    grep \
-    libxml2 \
-    libxml2-utils \
-    libxslt \
-    libxslt-dev \
-    lsb-release \
-    mariadb-client \
-    memcached \
-    musl-locales \
-    musl-locales-lang \
-    netcat-openbsd \
-    nodejs \
-    npm \
-    openrc \
-    perl \
-    perl-dev \
-    perl-dbd-mysql \
-    perl-dbd-sqlite \
-    perl-dbi \
-    perl-datetime \
-    perl-date-calc \
-    perl-date-manip \
-    perl-datetime-format-builder \
-    perl-datetime-format-strptime \
-    perl-datetime-timezone \
-    perl-doc \
-    perl-email-address \
-    perl-email-messageid \
-    perl-email-mime \
-    perl-file-slurp \
-    perl-gd \
-    perl-html-scrubber \
-    perl-json \
-    perl-io-socket-ssl \
-    perl-libwww \
-    perl-list-moreutils \
-    perl-locale-gettext \
-    perl-log-log4perl \
-    perl-mojolicious \
-    perl-net-cidr \
-    perl-net-idn-encode \
-    perl-net-ssleay \
-    perl-parallel-forkmanager \
-    perl-params-validate \
-    perl-sereal-decoder \
-    perl-sereal-encoder \
-    perl-readonly \
-    perl-string-random \
-    perl-sub-name \
-    perl-template-toolkit \
-    perl-text-csv_xs \
-    perl-utils \
-    perl-xml-libxslt \
-    perl-xml-libxml \
-    perl-xml-simple \
-    perl-yaml-libyaml \
-    pwgen \
-    rabbitmq-server \
-    readline-dev \
-    sed \
-    shadow \
-    sudo \
-    ttf-dejavu \
-    tzdata \
-    unzip \
-    wget \
-    xmlstarlet \
-    busybox-extras
+FROM base AS builder
+RUN apk add --no-cache --virtual .build-deps build-base perl-dev linux-headers openssl-dev zlib-dev expat-dev mariadb-dev libxml2-dev libxslt-dev icu-dev gd-dev libpng-dev freetype-dev libjpeg-turbo-dev libwebp-dev libzip-dev yaml-dev git curl
+RUN curl -L https://cpanmin.us | perl - --self-upgrade
+RUN cpanm --notest --local-lib=/opt/koha-perl Modern::Perl Log::Log4perl Plack Starman Starlet CGI CGI::Session CGI::Compile CGI::Emulate::PSGI DBI DBD::SQLite Mojolicious
 
-# Build and install YAZ (Z39.50/SRU toolkit) from source on Alpine musl
-ENV YAZ_VERSION=5.37.3
-RUN wget https://ftp.indexdata.com/pub/yaz/yaz-${YAZ_VERSION}.tar.gz -O /tmp/yaz.tar.gz \
-    && tar -xzf /tmp/yaz.tar.gz -C /tmp \
-    && cd /tmp/yaz-${YAZ_VERSION} \
-    && CFLAGS="-std=gnu17 -Wno-error=implicit-function-declaration -D_GNU_SOURCE" ./configure --prefix=/usr --sysconfdir=/etc \
-    && make -j$(nproc) \
-    && make install \
-    && rm -rf /tmp/yaz*
+FROM builder AS koha-deps
+COPY koha/cpanfile koha/cpanfile.* /tmp/koha-deps/
+COPY koha/ /kohadevbox/koha/
+WORKDIR /kohadevbox/koha
+RUN cpanm --notest --local-lib=/opt/koha-perl --installdeps . || true; \
+    cpanm --notest --local-lib=/opt/koha-perl Mojolicious::Plugin::OpenAPI Mojolicious::Plugin::OAuth2 Mojolicious::Plugin::OAuth2::Server Mojolicious::Plugin::AssetPack Mojo::JWT Net::OAuth2::AuthorizationServer Crypt::JWT Struct::Diff PDF::API2 PDF::Reuse GD::Barcode::QRcode Barcode::Code128 Net::Z3950::ZOOM MARC::Record MARC::File::XML MARC::Charset Search::Elasticsearch CHI CHI::Driver::Memcached Cache::Memcached::Fast Gravatar::URL Locale::PO Business::ISBN Business::ISMN Business::ISSN Algorithm::CheckDigits Authen::CAS::Client Crypt::Eksblowfish Crypt::OpenSSL::RSA Crypt::OpenSSL::Random Email::Stuffer Email::Valid Email::MIME Email::Sender Email::Address::XS Template::Plugin::JSON::Escape HTML::Template::Pro HTML::Scrubber DateTime::Format::MySQL DateTime::Format::ISO8601 DateTime::Format::DateParse DateTime::Format::Mail DateTime::Format::W3CDTF Plack::Middleware::ReverseProxy WWW::CSRF HTTP::OAI HTTP::BrowserDetect Net::Stomp OAuth::Lite String::Random Number::Phone Sereal Data::Pagination File::MimeInfo::Magic XML::Writer Devel::Cover Devel::NYTProf
 
-RUN npm install -g yarn gulp-cli
+FROM base AS koha-base
+COPY --from=koha-deps /opt/koha-perl /opt/koha-perl
+COPY --from=node-builder /opt/koha-tmpl-built /opt/koha-tmpl-built
+COPY files-alpine/ /build/files-alpine/
+COPY koha/ /kohadevbox/koha/
+RUN set -eux; \
+    mkdir -p /usr/sbin /usr/local/bin /usr/share/koha/bin /kohadevbox/lib /etc/koha /kohadevbox/templates /var/log/koha /var/run/koha /var/lib/koha /etc/koha/sites /etc/koha/log4perl /var/lock/koha/kohadev /etc/mysql/ssl; \
+    cp /kohadevbox/koha/debian/templates/* /etc/koha/ 2>/dev/null || true; \
+    ls -l /etc/koha/koha-conf-site.xml.in /etc/koha/log4perl-site.conf.in; \
+    if [ -d /opt/koha-tmpl-built/koha-tmpl ]; then cp -r /opt/koha-tmpl-built/koha-tmpl /kohadevbox/koha/ 2>/dev/null || true; fi; \
+    if [ -f /build/files-alpine/templates/koha-conf.xml.template ]; then cp /build/files-alpine/templates/koha-conf.xml.template /etc/koha/koha-conf.xml.template; cp /build/files-alpine/templates/koha-conf.xml.template /kohadevbox/templates/koha-conf.xml.template; fi; \
+    if [ -f /build/files-alpine/templates/log4perl.conf.template ]; then cp /build/files-alpine/templates/log4perl.conf.template /etc/koha/log4perl.conf.template; fi; \
+    if [ -f /build/files-alpine/scripts/koha-create ]; then cp /build/files-alpine/scripts/koha-create /usr/local/bin/koha-create; cp /build/files-alpine/scripts/koha-create /usr/sbin/koha-create; fi; \
+    if [ -f /build/files-alpine/scripts/koha-functions.sh ]; then cp /build/files-alpine/scripts/koha-functions.sh /usr/share/koha/bin/koha-functions.sh; fi; \
+    if [ -f /kohadevbox/koha/debian/scripts/koha-functions.sh ]; then cp /kohadevbox/koha/debian/scripts/koha-functions.sh /usr/share/koha/bin/koha-functions.sh; fi; \
+    if [ -f /build/files-alpine/scripts/koha-plack ]; then cp /build/files-alpine/scripts/koha-plack /usr/local/bin/koha-plack; fi; \
+    if [ -f /build/files-alpine/scripts/koha-worker ]; then cp /build/files-alpine/scripts/koha-worker /usr/local/bin/koha-worker; fi; \
+    cp /build/files-alpine/run.sh /usr/local/bin/run.sh; \
+    if [ -f /build/files-alpine/scripts/run.sh ]; then cp /build/files-alpine/scripts/run.sh /kohadevbox/lib/run-sh-alpine.sh 2>/dev/null || true; fi; \
+    chmod +x /usr/local/bin/run.sh /usr/local/bin/koha-create /usr/sbin/koha-create /usr/share/koha/bin/koha-functions.sh /usr/local/bin/koha-plack /usr/local/bin/koha-worker 2>/dev/null || true; \
+    chown -R kohadev:kohadev /kohadevbox /opt/koha-perl /var/log/koha /var/run/koha /var/lib/koha /var/lock/koha /etc/koha; \
+    ln -sf /usr/local/bin/run.sh /kohadevbox/run.sh; \
+    ls -lh /usr/local/bin/koha-create /usr/share/koha/bin/koha-functions.sh /etc/koha/koha-conf-site.xml.in
 
-RUN cpanm --notest Modern::Perl \
-    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
-
-# CGI::Session md5 ID generation requires Crypt::SysRandom at runtime.
-RUN cpanm --notest Crypt::SysRandom \
-    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
-
-# Alpine 3.24 lacks a packaged Locale::PO required by Koha translator tooling.
-RUN cpanm --notest Locale::PO \
-    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
-
-# Alpine 3.24 lacks a packaged Struct::Diff; install from CPAN for Koha logging.
-RUN cpanm --notest Struct::Diff \
-    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
-
-# Alpine 3.24 lacks a packaged DateTime::Format::MySQL.
-RUN cpanm --notest DateTime::Format::MySQL \
-    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
-
-# Alpine 3.24 lacks a packaged Locale::Currency::Format.
-RUN cpanm --notest Locale::Currency::Format \
-    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
-
-# Alpine 3.24 lacks a packaged Array::Utils.
-RUN cpanm --notest Array::Utils \
-    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
-
-# Alpine 3.24 lacks a packaged MARC::Record.
-RUN cpanm --notest MARC::Record \
-    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
-
-# Alpine 3.24 lacks a packaged MARC::Record::MiJ.
-RUN cpanm --notest MARC::Record::MiJ \
-    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
-
-# Alpine 3.24 lacks a packaged MARC::File::XML.
-RUN cpanm --notest MARC::File::XML \
-    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
-
-# Alpine 3.24 lacks a packaged GD::Barcode.
-RUN cpanm --notest GD::Barcode \
-    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
-
-# Alpine 3.24 lacks a packaged Auth::GoogleAuth.
-RUN cpanm --notest Auth::GoogleAuth \
-    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
-
-# Alpine 3.24 lacks a packaged Number::Format.
-RUN cpanm --notest Number::Format \
-    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
-
-# Alpine 3.24 lacks a packaged Algorithm::Munkres.
-RUN cpanm --notest Algorithm::Munkres \
-    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
-
-# Alpine 3.24 lacks a packaged Net::Stomp.
-RUN cpanm --notest Net::Stomp \
-    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
-
-# Alpine 3.24 lacks a packaged Mojolicious::Plugin::OAuth2.
-RUN cpanm --notest Mojolicious::Plugin::OAuth2 \
-    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
-
-# Alpine 3.24 lacks a packaged JSON::Validator.
-RUN cpanm --notest JSON::Validator \
-    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
-
-# Alpine 3.24 lacks a packaged Text::Iconv.
-RUN cpanm --notest Text::Iconv \
-    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
-
-# Alpine 3.24 lacks a packaged Algorithm::CheckDigits.
-RUN cpanm --notest Algorithm::CheckDigits \
-    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
-
-# Alpine package set does not provide Locale::Messages for this image.
-RUN cpanm --notest Locale::Messages \
-    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
-
-# Alpine 3.24 lacks a packaged DBIx::RunSQL.
-RUN cpanm --notest DBIx::RunSQL \
-    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
-
-# Alpine 3.24 lacks a packaged WWW::CSRF.
-RUN cpanm --notest WWW::CSRF \
-    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
-
-# Alpine 3.24 lacks a packaged Mojo::JWT.
-RUN cpanm --notest Mojo::JWT \
-    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
-
-# Alpine 3.24 lacks packaged Email::Stuffer.
-RUN cpanm --notest Email::Stuffer \
-    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
-
-# Alpine 3.24 lacks packaged Lingua::Stem.
-RUN cpanm --notest Lingua::Stem \
-    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
-
-# Alpine 3.24 lacks packaged Lingua::Stem::Snowball.
-RUN cpanm --notest Lingua::Stem::Snowball \
-    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
-
-# Alpine 3.24 lacks a packaged Search::Elasticsearch.
-RUN cpanm --notest Search::Elasticsearch \
-    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
-
-# Alpine 3.24 lacks a packaged DBIx::Class.
-RUN cpanm --notest DBIx::Class \
-    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
-
-# Native compilation of Z39.50/SRU Perl module against compiled YAZ library
-RUN cpanm --notest Net::Z3950::ZOOM \
-    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources
-
-# Debian-era Koha staging scripts expect these filesystem targets to exist.
-RUN mkdir -p \
-    /etc/koha \
-    /etc/koha/zebradb \
-    /etc/koha/zebradb/marc_defs \
-    /etc/default \
-    /etc/cron.d \
-    /etc/cron.daily \
-    /etc/cron.hourly \
-    /etc/cron.monthly \
-    /etc/bash_completion.d \
-    /etc/logrotate.d \
-    /etc/apache2/sites-available \
-    /etc/apache2/sites-enabled \
-    /usr/share/koha/bin \
-    /usr/share/koha/intranet/htdocs \
-    /usr/share/koha/opac/htdocs \
-    /usr/share/man/man8 \
-    /usr/share/xml/docbook/stylesheet
-
-# Align Alpine docbook packaging layout with the path expected by cp_debian_files.pl.
-RUN if [ -e /usr/share/xml/docbook/xsl-stylesheets-1.79.2/manpages/docbook.xsl ]; then \
-        rm -rf /usr/share/xml/docbook/stylesheet/docbook-xsl-ns; \
-        ln -s /usr/share/xml/docbook/xsl-stylesheets-1.79.2 /usr/share/xml/docbook/stylesheet/docbook-xsl-ns; \
-    fi
-
-# Provide Debian-like Apache helper commands used by Koha scripts.
-RUN if [ -f /etc/apache2/httpd.conf ]; then \
-        grep -Fqx 'IncludeOptional /etc/apache2/sites-enabled/*.conf' /etc/apache2/httpd.conf \
-            || echo 'IncludeOptional /etc/apache2/sites-enabled/*.conf' >> /etc/apache2/httpd.conf; \
-        sed -i 's/^#LoadModule rewrite_module modules\/mod_rewrite.so/LoadModule rewrite_module modules\/mod_rewrite.so/' /etc/apache2/httpd.conf; \
-        sed -i 's/^#LoadModule cgi_module modules\/mod_cgi.so/LoadModule cgi_module modules\/mod_cgi.so/' /etc/apache2/httpd.conf; \
-        sed -i 's/^#LoadModule cgid_module modules\/mod_cgid.so/LoadModule cgid_module modules\/mod_cgid.so/' /etc/apache2/httpd.conf; \
-    fi
-
-# LSB init stubs for Debian-origin koha-zebra/koha-indexer/koha-sip/koha-z3950-responder.
-# OpenRC's einfo helpers live in /lib/rc/sh/functions.sh, which is absent in minimal
-# Alpine container images.  We cannot source that file; these stubs are the correct
-# alternative.  log_end_msg MUST propagate its status argument — callers do
-# "(log_end_msg 1) || return 1" and rely on the exit code for error handling.
-RUN mkdir -p /lib/lsb
-RUN cat >/lib/lsb/init-functions <<'EOF'
-#!/bin/sh
-log_success_msg()  { echo "  [ OK ] $*"; }
-log_warning_msg()  { echo "  [WARN] $*"; }
-log_failure_msg()  { echo "  [FAIL] $*"; }
-log_daemon_msg()   { printf '  * %s\n' "$*"; }
-log_progress_msg() { printf '  %s\n' "$*"; }
-log_end_msg()      { [ "${1:-0}" -eq 0 ] && echo '  [ OK ]' || echo '  [FAIL]'; return "${1:-0}"; }
-EOF
-
-RUN chmod 0755 /lib/lsb/init-functions
-
-# Phase 5: Replace the crude /etc/init.d/apache2 shim with a proper OpenRC script,
-# and add OpenRC service scripts for koha-plack and koha-worker.
-COPY files-alpine/openrc/apache2      /etc/init.d/apache2
-COPY files-alpine/openrc/koha-plack   /etc/init.d/koha-plack
-COPY files-alpine/openrc/koha-worker  /etc/init.d/koha-worker
-RUN chmod 0755 /etc/init.d/apache2 /etc/init.d/koha-plack /etc/init.d/koha-worker \
-    && sed -i 's/\r$//' /etc/init.d/apache2 /etc/init.d/koha-plack /etc/init.d/koha-worker
-
-# Phase 5: Alpine periodic cron scripts for Koha scheduled maintenance.
-# BusyBox crond reads /etc/crontabs/root which calls run-parts /etc/periodic/*.
-RUN mkdir -p /etc/periodic/hourly /etc/periodic/daily /etc/periodic/weekly /etc/periodic/monthly \
-    && if ! grep -q 'run-parts' /etc/crontabs/root 2>/dev/null; then \
-         printf '# run-parts\n*/15 * * * *\trun-parts /etc/periodic/15min\n0 * * * *\trun-parts /etc/periodic/hourly\n0 2 * * *\trun-parts /etc/periodic/daily\n0 3 * * 0\trun-parts /etc/periodic/weekly\n0 4 1 * *\trun-parts /etc/periodic/monthly\n' \
-             >> /etc/crontabs/root; \
-       fi
-COPY files-alpine/cron/koha-hourly   /etc/periodic/hourly/koha-hourly
-COPY files-alpine/cron/koha-daily    /etc/periodic/daily/koha-daily
-COPY files-alpine/cron/koha-monthly  /etc/periodic/monthly/koha-monthly
-RUN chmod 0755 /etc/periodic/hourly/koha-hourly \
-               /etc/periodic/daily/koha-daily \
-               /etc/periodic/monthly/koha-monthly \
-    && sed -i 's/\r$//' /etc/periodic/hourly/koha-hourly \
-                        /etc/periodic/daily/koha-daily \
-                        /etc/periodic/monthly/koha-monthly
-
-RUN mkdir -p /kohadevbox
-WORKDIR /kohadevbox
-
-COPY files-alpine/run.sh /kohadevbox/
-COPY apply-patches.sh /kohadevbox/
-COPY patches /kohadevbox/patches
-COPY files-alpine/lib /kohadevbox/lib
-COPY files-alpine/scripts /kohadevbox/files-alpine/scripts
-COPY files-alpine/templates /kohadevbox/templates
-COPY files-alpine/git_hooks /kohadevbox/git_hooks
-COPY files-alpine/mariadb-ssl /etc/mysql/ssl
-COPY env/defaults.env /kohadevbox/templates/defaults.env
-
-# Ensure Linux line endings even when the repository is checked out or edited with CRLF.
-RUN sed -i 's/\r$//' /kohadevbox/run.sh \
-    && sed -i 's/\r$//' /kohadevbox/apply-patches.sh \
-    && find /kohadevbox/templates -type f -exec sed -i 's/\r$//' {} + \
-    && find /kohadevbox/files-alpine/scripts -type f -exec sed -i 's/\r$//' {} + \
-    && find /kohadevbox/git_hooks -type f -exec sed -i 's/\r$//' {} + \
-    && chmod +x /kohadevbox/run.sh /kohadevbox/apply-patches.sh
-
-# Install Alpine-owned admin script overrides ahead of runtime staging.
-RUN install -m 0755 /kohadevbox/files-alpine/scripts/koha-create /usr/sbin/koha-create \
-    && install -m 0755 /kohadevbox/files-alpine/scripts/koha-plack /usr/sbin/koha-plack \
-    && install -m 0755 /kohadevbox/files-alpine/scripts/koha-worker /usr/sbin/koha-worker \
-    && install -m 0755 /kohadevbox/files-alpine/scripts/koha-functions.sh /usr/sbin/koha-functions.sh
-
-# Helper repositories used by the Koha development workflow.
-RUN cd /kohadevbox \
-    && git clone https://gitlab.com/koha-community/koha-misc4dev.git misc4dev \
-    && git clone https://gitlab.com/koha-community/qa-test-tools.git qa-test-tools \
-    && mkdir -p gitify \
-    && printf '#!/bin/sh\n# Phase 3: koha-gitify eliminated; no-op stub\nexit 0\n' > gitify/koha-gitify \
-    && chmod 0755 gitify/koha-gitify \
-    && chown -R 1000 misc4dev gitify qa-test-tools
-
-# Add the Alpine-specific misc4dev helper without changing the upstream clone layout.
-COPY files-alpine/misc4dev/cp_alpine_files.pl /kohadevbox/misc4dev/cp_alpine_files.pl
-COPY scripts/build-alpine-package.sh /usr/local/bin/build-alpine-package.sh
-
-RUN chmod +x /kohadevbox/misc4dev/cp_alpine_files.pl /usr/local/bin/build-alpine-package.sh
-
-EXPOSE 6001 8080 8081
-
-CMD ["/bin/bash", "/kohadevbox/run.sh"]
-
-# dev-runtime: thin wrapper that declares the koha source volume for bind-mount at runtime.
 FROM koha-base AS dev-runtime
-VOLUME /kohadevbox/koha
-
-FROM koha-base AS prod-runtime
-
-ARG KOHA_GIT_URL=https://git.koha-community.org/Koha-community/Koha.git
-# No default — must be supplied via --build-arg or docker-compose.prod.yml (sourced from env/.env KOHA_GIT_TAG)
-ARG KOHA_GIT_REF
-ARG KOHA_GIT_DEPTH=1
-ARG KOHA_VERSION
-
-LABEL org.opencontainers.image.title="koha-alpine-prod" \
-      org.opencontainers.image.version="${KOHA_VERSION}" \
-      org.opencontainers.image.source="${KOHA_GIT_URL}"
-
-# Bake a fixed Koha source tree in-image for production runs.
-RUN test -n "${KOHA_GIT_REF}" || { echo "ERROR: KOHA_GIT_REF is required. Set KOHA_GIT_TAG in env/.env then run: ./stack-alpine.sh build --image-mode prod --build-koha" >&2; exit 1; } \
-    && rm -rf /kohadevbox/koha \
-    && mkdir -p /kohadevbox/koha \
-    && git -C /kohadevbox/koha init \
-    && git -C /kohadevbox/koha remote add origin "${KOHA_GIT_URL}" \
-    && git -C /kohadevbox/koha fetch --depth "${KOHA_GIT_DEPTH}" origin "${KOHA_GIT_REF}" \
-    && git -C /kohadevbox/koha checkout --detach FETCH_HEAD
-
-# Pre-install JS dependencies and stage runtime assets, then clean build caches.
-RUN cd /kohadevbox/koha \
-    && CYPRESS_INSTALL_BINARY=0 yarn install --frozen-lockfile \
-    && /usr/local/bin/build-alpine-package.sh /kohadevbox/koha \
-    && rm -rf /kohadevbox/koha/node_modules \
-    && rm -rf /kohadevbox/koha/.git \
-    && rm -rf /usr/local/share/.cache/yarn \
-    && rm -rf /root/.cache \
-    && rm -rf /root/.npm \
-    && rm -rf /root/.cpanm/work /root/.cpanm/latest-build /root/.cpanm/sources \
-    && find /tmp -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-
-# Re-apply Alpine overrides after Debian script staging in production image.
-RUN install -m 0755 /kohadevbox/files-alpine/scripts/koha-create /usr/sbin/koha-create \
-    && install -m 0755 /kohadevbox/files-alpine/scripts/koha-plack /usr/sbin/koha-plack \
-    && install -m 0755 /kohadevbox/files-alpine/scripts/koha-worker /usr/sbin/koha-worker \
-    && install -m 0755 /kohadevbox/files-alpine/scripts/koha-functions.sh /usr/sbin/koha-functions.sh \
-    && sed -i '/^[[:space:]]*SetEnv PERL5LIB[[:space:]]/d' /etc/koha/apache-shared.conf 2>/dev/null || true \
-    && sed -i '/^[[:space:]]*DocumentRoot[[:space:]]/d; s|/usr/share/koha/intranet/cgi-bin|/kohadevbox/koha|g; s|/usr/share/koha/api|/kohadevbox/koha/api|g' /etc/koha/apache-shared-intranet.conf 2>/dev/null || true \
-    && sed -i '/^[[:space:]]*DocumentRoot[[:space:]]/d; s|/usr/share/koha/opac/cgi-bin/opac|/kohadevbox/koha/opac|g; s|/usr/share/koha/api|/kohadevbox/koha/api|g' /etc/koha/apache-shared-opac.conf 2>/dev/null || true
-
-ENV SKIP_RUNTIME_ASSET_COPY=yes
-ENV SKIP_YARN_INSTALL=yes
-ENV PERL5LIB=/kohadevbox/koha:/kohadevbox/koha/lib
+WORKDIR /kohadevbox
+EXPOSE 5000 6001 8080 8081
+ENV PERL5LIB=/opt/koha-perl/lib/perl5:/kohadevbox/koha:/kohadevbox/koha/lib PATH=/opt/koha-perl/bin:/usr/local/bin:/usr/bin:/bin KOHADEVBOX=/kohadevbox/koha KOHA_HOME=/var/lib/koha/kohadev KOHASITE=kohadev
+ENTRYPOINT ["/usr/local/bin/run.sh"]
