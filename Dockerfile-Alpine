@@ -1,59 +1,28 @@
-# Dockerfile-Alpine v16 FIXED - DO NOT overwrite koha-conf-site.xml.in
+# Dockerfile-Alpine v17 FINAL - uses REAL debian template, ignores broken custom template
 ARG ALPINE_VERSION=3.20
-
 FROM docker.io/library/node:22-alpine AS node-builder
 WORKDIR /tmp/build
 COPY . /tmp/context/
-RUN if [ -f /tmp/context/koha/package.json ]; then \
-      cp -r /tmp/context/koha /kohadevbox/koha && \
-      cd /kohadevbox/koha && yarn install --frozen-lockfile || npm install; \
-      yarn build 2>/dev/null || npm run build 2>/dev/null || true; \
-      mkdir -p /opt/koha-tmpl-built && cp -r /kohadevbox/koha/koha-tmpl /opt/koha-tmpl-built/ 2>/dev/null || true; \
-    else mkdir -p /opt/koha-tmpl-built; fi
-
+RUN if [ -f /tmp/context/koha/package.json ]; then cp -r /tmp/context/koha /kohadevbox/koha && cd /kohadevbox/koha && yarn install --frozen-lockfile || npm install; yarn build 2>/dev/null || npm run build 2>/dev/null || true; mkdir -p /opt/koha-tmpl-built && cp -r /kohadevbox/koha/koha-tmpl /opt/koha-tmpl-built/ 2>/dev/null || true; else mkdir -p /opt/koha-tmpl-built; fi
 FROM docker.io/library/alpine:${ALPINE_VERSION} AS base
-RUN addgroup -g 1000 kohadev && adduser -D -u 1000 -G kohadev -h /var/lib/koha/kohadev -s /bin/sh kohadev && \
-    addgroup -g 1001 kohadev-koha 2>/dev/null || addgroup kohadev-koha; adduser kohadev kohadev-koha 2>/dev/null || true
+RUN addgroup -g 1000 kohadev && adduser -D -u 1000 -G kohadev -h /var/lib/koha/kohadev -s /bin/sh kohadev && addgroup -g 1001 kohadev-koha 2>/dev/null || addgroup kohadev-koha; adduser kohadev kohadev-koha 2>/dev/null || true
 RUN apk add --no-cache perl perl-cgi perl-dbd-mysql perl-dbi apache2 apache2-utils mariadb-client mariadb-dev openssl ca-certificates curl wget tzdata sudo bash gettext envsubst pwgen findutils perl-app-cpanminus perl-local-lib perl-yaml libxml2 libxslt icu icu-data-full libpng freetype libjpeg-turbo libwebp gd
-RUN apk add --no-cache --virtual .yaz-build-deps build-base libxslt-dev libxml2-dev openssl-dev zlib-dev icu-dev readline-dev libedit-dev && \
-    wget -q https://ftp.indexdata.com/pub/yaz/yaz-5.34.0.tar.gz -O /tmp/yaz.tar.gz && tar xzf /tmp/yaz.tar.gz -C /tmp && cd /tmp/yaz-5.34.0 && ./configure --prefix=/usr >/dev/null && make -j$(nproc) >/dev/null && make install >/dev/null && cd / && rm -rf /tmp/yaz* && apk del .yaz-build-deps && apk add --no-cache libxslt libxml2 openssl icu readline libedit
-
+RUN apk add --no-cache --virtual .yaz-build-deps build-base libxslt-dev libxml2-dev openssl-dev zlib-dev icu-dev readline-dev libedit-dev && wget -q https://ftp.indexdata.com/pub/yaz/yaz-5.34.0.tar.gz -O /tmp/yaz.tar.gz && tar xzf /tmp/yaz.tar.gz -C /tmp && cd /tmp/yaz-5.34.0 && ./configure --prefix=/usr >/dev/null && make -j$(nproc) >/dev/null && make install >/dev/null && cd / && rm -rf /tmp/yaz* && apk del .yaz-build-deps && apk add --no-cache libxslt libxml2 openssl icu readline libedit
 FROM base AS builder
 RUN apk add --no-cache --virtual .build-deps build-base perl-dev linux-headers openssl-dev zlib-dev expat-dev mariadb-dev libxml2-dev libxslt-dev icu-dev gd-dev libpng-dev freetype-dev libjpeg-turbo-dev libwebp-dev libzip-dev yaml-dev git curl
 RUN curl -L https://cpanmin.us | perl - --self-upgrade
 RUN cpanm --notest --local-lib=/opt/koha-perl Modern::Perl Log::Log4perl Plack Starman Starlet CGI CGI::Session CGI::Compile CGI::Emulate::PSGI DBI DBD::SQLite Mojolicious
-
 FROM builder AS koha-deps
 COPY koha/cpanfile koha/cpanfile.* /tmp/koha-deps/
 COPY koha/ /kohadevbox/koha/
 WORKDIR /kohadevbox/koha
-RUN cpanm --notest --local-lib=/opt/koha-perl --installdeps . || true; \
-    cpanm --notest --local-lib=/opt/koha-perl Mojolicious::Plugin::OpenAPI Mojolicious::Plugin::OAuth2 Mojolicious::Plugin::OAuth2::Server Mojolicious::Plugin::AssetPack Mojo::JWT Net::OAuth2::AuthorizationServer Crypt::JWT Struct::Diff PDF::API2 PDF::Reuse GD::Barcode::QRcode Barcode::Code128 Net::Z3950::ZOOM MARC::Record MARC::File::XML MARC::Charset Search::Elasticsearch CHI CHI::Driver::Memcached Cache::Memcached::Fast Gravatar::URL Locale::PO Business::ISBN Business::ISMN Business::ISSN Algorithm::CheckDigits Authen::CAS::Client Crypt::Eksblowfish Crypt::OpenSSL::RSA Crypt::OpenSSL::Random Email::Stuffer Email::Valid Email::MIME Email::Sender Email::Address::XS Template::Plugin::JSON::Escape HTML::Template::Pro HTML::Scrubber DateTime::Format::MySQL DateTime::Format::ISO8601 DateTime::Format::DateParse DateTime::Format::Mail DateTime::Format::W3CDTF Plack::Middleware::ReverseProxy WWW::CSRF HTTP::OAI HTTP::BrowserDetect Net::Stomp OAuth::Lite String::Random Number::Phone Sereal Data::Pagination File::MimeInfo::Magic XML::Writer Devel::Cover Devel::NYTProf
-
+RUN cpanm --notest --local-lib=/opt/koha-perl --installdeps . || true; cpanm --notest --local-lib=/opt/koha-perl Mojolicious::Plugin::OpenAPI Mojolicious::Plugin::OAuth2 Mojolicious::Plugin::OAuth2::Server Mojolicious::Plugin::AssetPack Mojo::JWT Net::OAuth2::AuthorizationServer Crypt::JWT Struct::Diff PDF::API2 PDF::Reuse GD::Barcode::QRcode Barcode::Code128 Net::Z3950::ZOOM MARC::Record MARC::File::XML MARC::Charset Search::Elasticsearch CHI CHI::Driver::Memcached Cache::Memcached::Fast Gravatar::URL Locale::PO Business::ISBN Business::ISMN Business::ISSN Algorithm::CheckDigits Authen::CAS::Client Crypt::Eksblowfish Crypt::OpenSSL::RSA Crypt::OpenSSL::Random Email::Stuffer Email::Valid Email::MIME Email::Sender Email::Address::XS Template::Plugin::JSON::Escape HTML::Template::Pro HTML::Scrubber DateTime::Format::MySQL DateTime::Format::ISO8601 DateTime::Format::DateParse DateTime::Format::Mail DateTime::Format::W3CDTF Plack::Middleware::ReverseProxy WWW::CSRF HTTP::OAI HTTP::BrowserDetect Net::Stomp OAuth::Lite String::Random Number::Phone Sereal Data::Pagination File::MimeInfo::Magic XML::Writer
 FROM base AS koha-base
 COPY --from=koha-deps /opt/koha-perl /opt/koha-perl
 COPY --from=node-builder /opt/koha-tmpl-built /opt/koha-tmpl-built
 COPY files-alpine/ /build/files-alpine/
 COPY koha/ /kohadevbox/koha/
-RUN set -eux; \
-    mkdir -p /usr/sbin /usr/local/bin /usr/share/koha/bin /kohadevbox/lib /etc/koha /kohadevbox/templates /var/log/koha /var/run/koha /var/lib/koha /etc/koha/sites /etc/koha/log4perl /var/lock/koha/kohadev /etc/mysql/ssl; \
-    cp /kohadevbox/koha/debian/templates/* /etc/koha/ 2>/dev/null || true; \
-    ls -l /etc/koha/koha-conf-site.xml.in /etc/koha/log4perl-site.conf.in; \
-    if [ -d /opt/koha-tmpl-built/koha-tmpl ]; then cp -r /opt/koha-tmpl-built/koha-tmpl /kohadevbox/koha/ 2>/dev/null || true; fi; \
-    if [ -f /build/files-alpine/templates/koha-conf.xml.template ]; then cp /build/files-alpine/templates/koha-conf.xml.template /etc/koha/koha-conf.xml.template; cp /build/files-alpine/templates/koha-conf.xml.template /kohadevbox/templates/koha-conf.xml.template; fi; \
-    if [ -f /build/files-alpine/templates/log4perl.conf.template ]; then cp /build/files-alpine/templates/log4perl.conf.template /etc/koha/log4perl.conf.template; fi; \
-    if [ -f /build/files-alpine/scripts/koha-create ]; then cp /build/files-alpine/scripts/koha-create /usr/local/bin/koha-create; cp /build/files-alpine/scripts/koha-create /usr/sbin/koha-create; fi; \
-    if [ -f /build/files-alpine/scripts/koha-functions.sh ]; then cp /build/files-alpine/scripts/koha-functions.sh /usr/share/koha/bin/koha-functions.sh; fi; \
-    if [ -f /kohadevbox/koha/debian/scripts/koha-functions.sh ]; then cp /kohadevbox/koha/debian/scripts/koha-functions.sh /usr/share/koha/bin/koha-functions.sh; fi; \
-    if [ -f /build/files-alpine/scripts/koha-plack ]; then cp /build/files-alpine/scripts/koha-plack /usr/local/bin/koha-plack; fi; \
-    if [ -f /build/files-alpine/scripts/koha-worker ]; then cp /build/files-alpine/scripts/koha-worker /usr/local/bin/koha-worker; fi; \
-    cp /build/files-alpine/run.sh /usr/local/bin/run.sh; \
-    if [ -f /build/files-alpine/scripts/run.sh ]; then cp /build/files-alpine/scripts/run.sh /kohadevbox/lib/run-sh-alpine.sh 2>/dev/null || true; fi; \
-    chmod +x /usr/local/bin/run.sh /usr/local/bin/koha-create /usr/sbin/koha-create /usr/share/koha/bin/koha-functions.sh /usr/local/bin/koha-plack /usr/local/bin/koha-worker 2>/dev/null || true; \
-    chown -R kohadev:kohadev /kohadevbox /opt/koha-perl /var/log/koha /var/run/koha /var/lib/koha /var/lock/koha /etc/koha; \
-    ln -sf /usr/local/bin/run.sh /kohadevbox/run.sh; \
-    ls -lh /usr/local/bin/koha-create /usr/share/koha/bin/koha-functions.sh /etc/koha/koha-conf-site.xml.in
-
+RUN set -eux; mkdir -p /usr/sbin /usr/local/bin /usr/share/koha/bin /kohadevbox/lib /etc/koha /kohadevbox/templates /var/log/koha /var/run/koha /var/lib/koha /etc/koha/sites /etc/koha/log4perl /var/lock/koha/kohadev /etc/mysql/ssl; cp /kohadevbox/koha/debian/templates/* /etc/koha/; ls -lh /etc/koha/koha-conf-site.xml.in; if [ -d /opt/koha-tmpl-built/koha-tmpl ]; then cp -r /opt/koha-tmpl-built/koha-tmpl /kohadevbox/koha/ 2>/dev/null || true; fi; cp /build/files-alpine/run.sh /usr/local/bin/run.sh; chmod +x /usr/local/bin/run.sh; chown -R kohadev:kohadev /kohadevbox /opt/koha-perl /var/log/koha /var/run/koha /var/lib/koha /var/lock/koha /etc/koha; ln -sf /usr/local/bin/run.sh /kohadevbox/run.sh
 FROM koha-base AS dev-runtime
 WORKDIR /kohadevbox
 EXPOSE 5000 6001 8080 8081
