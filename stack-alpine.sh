@@ -1259,6 +1259,11 @@ fi
 case "${COMMAND}" in
 
   start)
+    if [[ "${KOHA_DB_ROOT_PASSWORD}" == "change_me_before_first_start" ]]; then
+      die "Default placeholder password detected for KOHA_DB_ROOT_PASSWORD in env/.env.
+           Please edit env/.env and set a secure password before the first start."
+    fi
+
     check_prereqs
     [[ "${PREPARE_DB_CLIENT_TLS}" == true ]] && prepare_mariadb_client_tls
     if [[ "${KOHA_IMAGE_MODE}" == "dev" ]]; then
