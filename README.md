@@ -206,8 +206,17 @@ curl -I http://localhost:8081
 
 Expected result:
 
-1. Koha log includes: `koha-testing-docker has started up and is ready to be enjoyed!`
+1. Koha log includes: `[run.sh] Startup complete - OPAC on :8080, staff on :8081` followed by `[watchdog] Service watchdog started (instance=kohadev, plack=yes, worker=yes, interval=30s)`.
 2. OPAC (`8080`) and Staff (`8081`) respond (typically 200/302 depending on route).
+
+On the very first boot against a given `koha/` checkout, expect an extra ~30-90 seconds
+before that message: `run.sh` detects that the compiled OPAC/staff stylesheet
+(`koha-tmpl/opac-tmpl/bootstrap/css/opac.css`) is missing and runs
+`yarn install && yarn build` automatically (gulp for CSS, rspack for JS) before
+continuing. Subsequent restarts skip this once the file exists. Set
+`KOHA_ALPINE_SKIP_YARN_INSTALL=yes` in `env/.env` to skip it entirely (pages will
+then render with no CSS/JS until you run `yarn build` yourself inside the
+container).
 
 Login defaults come from `env/.env`:
 
@@ -351,16 +360,28 @@ Important:
 ```bash
 # Wait 120-140 seconds for full bootstrap, then check:
 docker compose -f docker-compose-alpinekoha.yml logs --tail=80 koha
-# Should see: "koha-testing-docker has started up and is ready to be enjoyed!"
+# Should see: "[run.sh] Startup complete - OPAC on :8080, staff on :8081"
+# followed by: "[watchdog] Service watchdog started (instance=kohadev, plack=yes, worker=yes, ...)"
 
-# Optional: confirm Apache CGI is available before running tests
-docker compose -f docker-compose-alpinekoha.yml exec -T koha httpd -M | grep cgi_module
+# Confirm Apache has mod_cgi AND mod_proxy_http loaded (Plack is proxied through
+# Apache via a unix socket; without apache2-proxy installed, mod_proxy_http is
+# silently absent and every proxied request 503s)
+docker compose -f docker-compose-alpinekoha.yml exec -T koha httpd -M | grep -E 'cgi_module|proxy_http_module'
+
+# Confirm koha-plack (Starman) is actually running
+docker compose -f docker-compose-alpinekoha.yml exec -T koha sh -c 'PATH=/usr/sbin:$PATH koha-plack --status kohadev'
 
 # Only now run the endpoint suite
-./test-endpoints.sh
+./test-plack-stack.sh --no-recreate
 ```
 
-If you run `./test-endpoints.sh` too early, you can get false negatives (for example `mod_cgi` not loaded yet) while bootstrap is still in progress.
+If you run the test suite too early, you can get false negatives (for example
+`mod_proxy_http` or `koha-plack` not up yet) while bootstrap is still in
+progress. `test-plack-stack.sh` is the current, maintained harness (22 checks:
+Apache config/modules, Plack process + unix-socket health, HTTP endpoints
+including CSS/jQuery asset-presence, watchdog crash-recovery, restart
+idempotency). `test-endpoints.sh` predates the Apache+Plack-proxy architecture
+and assumes pure `mod_cgi`-only serving; treat it as legacy/secondary.
 
 ### First Login
 
@@ -389,6 +410,35 @@ docker compose -f docker-compose-alpinekoha.yml down
 # To keep database between restarts, use: (data in koha-db-data volume persists)
 docker compose -f docker-compose-alpinekoha.yml stop
 ```
+
+### Rebuilding After Code Changes (read this before you file a "nothing works" bug)
+
+`files-alpine/run.sh`, `files-alpine/lib/`, `files-alpine/scripts/`, and
+`files-alpine/templates/` are bind-mounted into the container (see the `koha`
+service `volumes:` in `docker-compose-alpinekoha.yml`), so editing those files
+on the host and running `docker compose up -d` (or `--force-recreate`) is
+enough to pick them up — no rebuild needed.
+
+**Everything else is baked into the image at build time** and is invisible to
+`up -d`: `Dockerfile-Alpine` itself (apk packages, CPAN modules), and anything
+`run.sh` installs from those bind-mounted files into fixed system paths at
+boot (e.g. `/usr/sbin/koha-plack`). If you change `Dockerfile-Alpine`, or if
+behavior doesn't match what you just edited even after a `--force-recreate`,
+rebuild first:
+
+```bash
+docker compose -f docker-compose-alpinekoha.yml build koha
+docker compose -f docker-compose-alpinekoha.yml up -d --force-recreate koha
+```
+
+`docker compose up -d` alone silently reuses whatever image was last built —
+it will keep running old, stale, baked-in behavior indefinitely and give no
+warning that your `Dockerfile-Alpine` changes never took effect. A quick way
+to confirm you're not hitting this: compare the entrypoint script's checksum
+inside the container against the host file --
+`docker compose exec koha md5sum /usr/local/bin/run.sh` should match
+`md5sum files-alpine/run.sh` on the host (this exact check is the first thing
+`test-plack-stack.sh` verifies).
 
 ## Using stack-alpine.sh script
 
@@ -731,16 +781,18 @@ EXTRA_APT=                          # Additional Alpine packages
 
 The container runs these phases automatically:
 
-1. [db] Database initialization (MariaDB)
-2. [env] Environment setup & validation
-3. [perl] Perl module loading & verification
-4. [sip] SIP2 server configuration (optional)
-5. [yarn] Frontend asset build (CSS, JavaScript)
-6. [apache] Web server startup (CGI mode)
-7. [services] Background services (RabbitMQ, Memcached)
-8. [bootstrap-complete] HTTP endpoints ready
+1. [templates] Template/htdocs symlinks wired to the bind-mounted koha source
+2. [db] Database wait, schema init (fresh DB only), superlibrarian bootstrap
+3. [yarn] Frontend asset build (CSS, JavaScript) -- first boot only, skipped once `opac.css` exists
+4. [apache] Vhost render + Apache module setup (mod_cgi, mod_proxy_http, mod_rewrite)
+5. [plack] koha-plack (Starman, unix socket) + koha-worker start
+6. [apache-start] Apache startup (proxies to Plack; mod_cgi fallback for any unproxied path)
+7. [services] crond, watchdog (crash-recovery supervision for koha-plack/koha-worker)
+8. [bootstrap-complete] HTTP endpoints ready on :8080 (OPAC) and :8081 (Staff)
 
-**Timing:** ~140 seconds from `docker compose up` to "ready to be enjoyed!"
+**Timing:** ~30-140 seconds from `docker compose up` to
+`[run.sh] Startup complete` (longer on the very first boot against a given
+`koha/` checkout, since step 3 has to actually run `yarn build`).
 
 ### Patch Files vs Runtime Errors
 
@@ -1137,14 +1189,20 @@ docker compose -f docker-compose-alpinekoha.yml exec koha \
 │  ├──────────────────────────────────────────────────────┤   │
 │  │                                                      │   │
 │  │  ┌─────────────────┐  ┌───────────────────────────┐  │   │
-│  │  │ Apache2 (CGI)   │  │ Perl/Koha Application     │  │   │
+│  │  │ Apache2         │  │ Perl/Koha Application     │  │   │
 │  │  │ :8080 (OPAC)    │  │ - run.sh entrypoint       │  │   │
 │  │  │ :8081 (Staff)   │  │ - koha-create bootstrap   │  │   │
 │  │  │                 │  │ - 38+ CPAN modules        │  │   │
 │  │  │ mod_rewrite ✓   │  │ - Yarn/Node.js assets     │  │   │
 │  │  │ mod_cgi ✓       │  │ - /kohadevbox/koha (mount)│  │   │
-│  │  │ mod_cgid ✓      │  │                           │  │   │
-│  │  └─────────────────┘  └───────────────────────────┘  │   │
+│  │  │ mod_proxy_http ✓│  │                           │  │   │
+│  │  └────────┬────────┘  └───────────────────────────┘  │   │
+│  │           │ proxied via unix socket                  │   │
+│  │  ┌────────▼────────┐                                 │   │
+│  │  │ koha-plack       │ Starman + plack.psgi           │   │
+│  │  │ (Plack::App::CGIBin, CGI fallback via mod_cgi      │   │
+│  │  │  for any path not yet proxied)                     │   │
+│  │  └─────────────────┘                                 │   │
 │  │                                                      │   │
 │  │  /etc/mysql/ssl/              (SSL certificates)     │   │
 │  │  - ca-cert.pem, ca-key.pem                           │   │
@@ -1178,7 +1236,7 @@ docker compose -f docker-compose-alpinekoha.yml exec koha \
 | Base | Alpine 3.24.1 runtime | perl, apache2, nodejs, openssl | - |
 | Build | Compilation tools | gcc, perl-dev, build-base | CPAN compilation |
 | Perl | CPAN modules | 38+ modules | Text::CSV_XS, Email::*, XML::*, DBIx::*, MARC::*, JSON::* |
-| Apache | Web server | apache2, apache2-utils, mod_rewrite, mod_cgi | CGI interface |
+| Apache | Web server | apache2, apache2-utils, apache2-proxy, mod_rewrite, mod_cgi, mod_proxy_http | CGI + Plack-proxy interface |
 | Node.js | Frontend | nodejs, npm, yarn | asset build pipeline |
 | `koha-base` | Shared final image (no VOLUME) | All above | Complete Koha stack, run.sh, templates, misc4dev |
 | `dev-runtime` | Dev image (thin wrapper) | inherits `koha-base` | Adds `VOLUME /kohadevbox/koha` for source bind-mount |
@@ -1261,6 +1319,64 @@ docker compose -f docker-compose-alpinekoha.yml build --no-cache
 docker compose -f docker-compose-alpinekoha.yml up -d
 ```
 
+#### "503 Service Unavailable" on OPAC/Staff (Plack proxy not reachable)
+
+Symptom: Apache responds (it's up), but every page returns `503`.
+
+Two independent, easy-to-miss causes, in order of likelihood:
+
+1. **`mod_proxy_http` isn't loaded.** Alpine's `apache2` apk package ships
+   *no* `mod_proxy` at all -- it's the separate `apache2-proxy` subpackage.
+   `<IfModule mod_proxy_http.c>` blocks in the rendered vhost fail silently
+   (no error, the block is just skipped) if it's missing, so this is easy to
+   miss. Verify and fix:
+   ```bash
+   docker compose -f docker-compose-alpinekoha.yml exec -T koha httpd -M | grep proxy
+   # If empty: add apache2-proxy to the apk add line in Dockerfile-Alpine, then
+   docker compose -f docker-compose-alpinekoha.yml build koha
+   docker compose -f docker-compose-alpinekoha.yml up -d --force-recreate koha
+   ```
+2. **The koha-plack unix socket has restrictive permissions.** Apache runs as
+   the `apache` user, not the instance user (`kohadev-koha`) that owns the
+   socket; without world read/write on the socket file itself, Apache gets
+   `(13)Permission denied: AH02454` connecting to it. Verify:
+   ```bash
+   docker compose -f docker-compose-alpinekoha.yml exec -T koha stat -c '%a' /var/run/koha/kohadev/plack.sock
+   # Expect 777. If not, restart plack: koha-plack --restart kohadev
+   ```
+
+#### Page loads (HTTP 200) but has no CSS, or JS is broken / console shows `$ is not defined`
+
+Symptom: `curl` looks fine (200, real HTML), but the page is unstyled and/or
+interactive elements (password-show toggle, datepickers, etc.) don't work.
+
+Cause: `Koha::Template::Plugin::Asset` (the `Asset.css`/`Asset.js` TT plugin)
+resolves files by checking `-e` on disk under `<opachtdocs>`/`<intrahtdocs>`
+(a symlink tree separate from Apache's own `DocumentRoot`) and **fails
+silently** (just a Perl `warn`, no visible error, no 404) if the file isn't
+found there -- the `<link>`/`<script>` tag is simply omitted. Two known causes
+in this image:
+
+1. The compiled stylesheet (`opac.css`) doesn't exist yet -- `run.sh` builds it
+   automatically on first boot (`yarn install && yarn build`); check the logs
+   for `[run.sh] Compiled CSS/JS assets missing; running yarn install +
+   build...` and let it finish, or run it manually:
+   ```bash
+   docker compose -f docker-compose-alpinekoha.yml exec -T koha sh -c 'cd /kohadevbox/koha && yarn build'
+   ```
+2. The `intranet-tmpl`/`opac-tmpl` symlinks under `/usr/share/koha/{intranet,opac}/htdocs/`
+   don't cover the whole tree (e.g. a missing `lib/` subdir breaks jQuery).
+   `run.sh` symlinks the whole `intranet-tmpl`/`opac-tmpl` directories in one
+   shot for this reason -- if you're on an older checkout that still
+   cherry-picks subdirectories, update to the current `files-alpine/run.sh`.
+
+Diagnostic: a page returning 200 is not sufficient proof it works -- check for
+the actual tags, or open it in a real browser and check the console:
+```bash
+curl -s http://localhost:8080/ | grep -c 'rel="stylesheet"'   # expect > 0
+curl -s http://localhost:8081/ | grep -c 'lib/jquery/jquery-3' # expect > 0
+```
+
 #### TLS mode drift causes HTTP 500 (most common first-run pitfall)
 
 Symptom:
@@ -1299,8 +1415,8 @@ Recovery (recommended):
 ```bash
 docker compose -f docker-compose-alpinekoha.yml up -d --force-recreate db koha
 docker compose -f docker-compose-alpinekoha.yml logs --tail=120 koha
-# wait for: "ready to be enjoyed"
-./test-endpoints.sh
+# wait for: "[run.sh] Startup complete"
+./test-plack-stack.sh --no-recreate
 ```
 
 ### Runtime Issues

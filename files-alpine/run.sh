@@ -56,8 +56,10 @@ ls -l /usr/share/koha/intranet/htdocs/intranet-tmpl/lib/jquery/jquery-3.6.0.min.
 # css/staff-global.css) and JS bundles are a build step (yarn build), not
 # checked into git. Without this, pages render but ship with zero CSS/JS.
 # Skip if the compiled OPAC stylesheet is already present (fast path on restart).
-if [ "${SKIP_YARN_BUILD:-no}" != "yes" ] && [ ! -f "${KOHADEVBOX}/koha-tmpl/opac-tmpl/bootstrap/css/opac.css" ]; then
-  echo "[run.sh] Compiled CSS/JS assets missing; running yarn install + build (set SKIP_YARN_BUILD=yes to skip)..."
+# Reuses the pre-existing SKIP_YARN_INSTALL knob (env/.env -> KOHA_ALPINE_SKIP_YARN_INSTALL)
+# instead of introducing a second, overlapping flag.
+if [ "${SKIP_YARN_INSTALL:-no}" != "yes" ] && [ ! -f "${KOHADEVBOX}/koha-tmpl/opac-tmpl/bootstrap/css/opac.css" ]; then
+  echo "[run.sh] Compiled CSS/JS assets missing; running yarn install + build (set SKIP_YARN_INSTALL=yes to skip)..."
   ( cd "${KOHADEVBOX}" && yarn install --frozen-lockfile 2>&1 | tail -20 && yarn build 2>&1 | tail -40 ) \
     || echo "[run.sh] WARNING: yarn build failed; OPAC/staff pages will render without CSS/JS. Check node/yarn are installed and re-run manually: cd ${KOHADEVBOX} && yarn build"
 fi
