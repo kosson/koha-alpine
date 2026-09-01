@@ -29,23 +29,38 @@ rm -rf /usr/share/koha/intranet/cgi-bin/installer
 ln -sf ${KOHADEVBOX}/installer /usr/share/koha/intranet/cgi-bin/installer || true
 rm -rf /usr/share/koha/intranet/htdocs/intranet-tmpl
 rm -rf /usr/share/koha/opac/htdocs/opac-tmpl
-mkdir -p /usr/share/koha/intranet/htdocs/intranet-tmpl
-mkdir -p /usr/share/koha/opac/htdocs/opac-tmpl
-# Ensure source exists before linking
-if [ -d ${KOHADEVBOX}/koha-tmpl/intranet-tmpl/prog ]; then
-  ln -sf ${KOHADEVBOX}/koha-tmpl/intranet-tmpl/prog /usr/share/koha/intranet/htdocs/intranet-tmpl/prog
-  ln -sf ${KOHADEVBOX}/koha-tmpl/intranet-tmpl/prog/en /usr/share/koha/intranet/htdocs/intranet-tmpl/en || true
+# Symlink the WHOLE intranet-tmpl/opac-tmpl trees (not just prog/bootstrap
+# subdirs): Koha::Template::Plugin::Asset resolves JS/CSS via <intrahtdocs>/
+# <opachtdocs> (these paths), independently of Apache's DocumentRoot. Cherry-
+# picking subdirs here previously missed intranet-tmpl/lib and
+# opac-tmpl/lib (jQuery, jQuery UI, etc.), so Asset.js/css silently omitted
+# their <script>/<link> tags (no error, just missing behavior/interactivity
+# in the browser -- e.g. "$ is not defined" JS console errors).
+if [ -d ${KOHADEVBOX}/koha-tmpl/intranet-tmpl ]; then
+  ln -sf ${KOHADEVBOX}/koha-tmpl/intranet-tmpl /usr/share/koha/intranet/htdocs/intranet-tmpl
 else
-  echo "ERROR: ${KOHADEVBOX}/koha-tmpl/intranet-tmpl/prog missing - check volume mount ./kohadevbox"
+  echo "ERROR: ${KOHADEVBOX}/koha-tmpl/intranet-tmpl missing - check volume mount ./kohadevbox"
 fi
-if [ -d ${KOHADEVBOX}/koha-tmpl/opac-tmpl/bootstrap ]; then
-  ln -sf ${KOHADEVBOX}/koha-tmpl/opac-tmpl/bootstrap /usr/share/koha/opac/htdocs/opac-tmpl/bootstrap
-  ln -sf ${KOHADEVBOX}/koha-tmpl/opac-tmpl/bootstrap/en /usr/share/koha/opac/htdocs/opac-tmpl/en || true
+if [ -d ${KOHADEVBOX}/koha-tmpl/opac-tmpl ]; then
+  ln -sf ${KOHADEVBOX}/koha-tmpl/opac-tmpl /usr/share/koha/opac/htdocs/opac-tmpl
+else
+  echo "ERROR: ${KOHADEVBOX}/koha-tmpl/opac-tmpl missing - check volume mount ./kohadevbox"
 fi
 ln -sf ${KOHADEVBOX}/koha-tmpl /usr/share/koha/koha-tmpl 2>/dev/null || true
 # soft check, don't exit
 ls -l /usr/share/koha/intranet/htdocs/intranet-tmpl/prog/en/modules/auth.tt 2>&1 || echo "WARN: auth.tt still missing, will try anyway"
-ls -l /usr/share/koha/intranet/htdocs/intranet-tmpl/en/modules/auth.tt 2>&1 || true
+ls -l /usr/share/koha/intranet/htdocs/intranet-tmpl/lib/jquery/jquery-3.6.0.min.js 2>&1 || echo "WARN: jquery still missing, will try anyway"
+
+# The bind-mounted koha checkout (dev workflow) ships CSS/JS *sources* only
+# (SCSS, unbundled JS); the compiled main stylesheet (css/opac.css,
+# css/staff-global.css) and JS bundles are a build step (yarn build), not
+# checked into git. Without this, pages render but ship with zero CSS/JS.
+# Skip if the compiled OPAC stylesheet is already present (fast path on restart).
+if [ "${SKIP_YARN_BUILD:-no}" != "yes" ] && [ ! -f "${KOHADEVBOX}/koha-tmpl/opac-tmpl/bootstrap/css/opac.css" ]; then
+  echo "[run.sh] Compiled CSS/JS assets missing; running yarn install + build (set SKIP_YARN_BUILD=yes to skip)..."
+  ( cd "${KOHADEVBOX}" && yarn install --frozen-lockfile 2>&1 | tail -20 && yarn build 2>&1 | tail -40 ) \
+    || echo "[run.sh] WARNING: yarn build failed; OPAC/staff pages will render without CSS/JS. Check node/yarn are installed and re-run manually: cd ${KOHADEVBOX} && yarn build"
+fi
 
 # User setup for Alpine
 if ! getent passwd kohadev-koha >/dev/null 2>&1; then
@@ -239,10 +254,15 @@ chmod -R 777 /var/log/koha/${KOHASITE} 2>/dev/null || true
 chmod -R 777 /var/run/koha/${KOHASITE} 2>/dev/null || true
 
 stop_apache_service
-start_apache_service
 
+# Start koha-plack BEFORE Apache: Apache's ProxyPass handles almost every
+# request path (including bare "/"), so if it starts first and accepts
+# connections before the plack.sock backend exists, every request 503s until
+# koha-plack finishes starting (~2s) -- observed as "the site doesn't answer"
+# on whichever vhost gets hit first after a fresh boot.
 enable_instance_services
 start_koha_service
+start_apache_service
 start_crond
 
 touch /kohadevbox/koha/.alpine-bootstrap-complete

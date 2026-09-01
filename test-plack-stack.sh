@@ -145,13 +145,30 @@ check_html_endpoint() {
         fail "$label: Apache default page served instead of the Koha vhost (rendered vhost not active) [$url]"
         return
     fi
+    if [ "${4:-}" = "check_css" ] && ! kexec "grep -qi '<link[^>]*rel=\"stylesheet\"' /tmp/plack-stack-check.html"; then
+        fail "$label: page has NO <link rel=\"stylesheet\"> at all (compiled CSS missing -- run 'yarn build' in the koha checkout, or check files-alpine/run.sh's yarn-build step ran successfully) [$url]"
+        return
+    fi
     pass "$label: HTTP 200, ${size} bytes, real HTML, no source leakage [$url]"
 }
 
-check_html_endpoint "Staff root /"          "http://localhost:8081/"           5000
-check_html_endpoint "Staff /index.html"     "http://localhost:8081/index.html" 5000
-check_html_endpoint "OPAC root /"           "http://localhost:8080/"           5000
-check_html_endpoint "OPAC /index.html"      "http://localhost:8080/index.html" 5000
+check_html_endpoint "Staff root /"          "http://localhost:8081/"           5000 check_css
+check_html_endpoint "Staff /index.html"     "http://localhost:8081/index.html" 5000 check_css
+check_html_endpoint "OPAC root /"           "http://localhost:8080/"           5000 check_css
+check_html_endpoint "OPAC /index.html"      "http://localhost:8080/index.html" 5000 check_css
+
+OPAC_CSS_CODE=$(kexec "curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/opac-tmpl/bootstrap/css/opac.css")
+if [ "$OPAC_CSS_CODE" = "200" ]; then
+    pass "Compiled OPAC stylesheet (opac.css) is served"
+else
+    fail "OPAC stylesheet not found (HTTP $OPAC_CSS_CODE) -- compiled CSS is missing from koha-tmpl (yarn/gulp build step didn't run or failed)"
+fi
+
+if kexec "curl -s http://localhost:8081/ | grep -q 'lib/jquery/jquery-3'"; then
+    pass "Staff login page includes the jQuery script tag"
+else
+    fail "Staff login page has NO jQuery <script> tag -- Koha::Template::Plugin::Asset silently omits it when intranet-tmpl/lib isn't reachable under <intrahtdocs> (check the intranet-tmpl symlink in run.sh covers the whole tree, not just prog/)"
+fi
 
 API_CODE=$(kexec "curl -s -o /dev/null -w '%{http_code}' http://localhost:8081/api/v1/app.pl/api/v1/patrons")
 if [ "$API_CODE" = "401" ] || [ "$API_CODE" = "200" ]; then
