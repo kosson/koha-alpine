@@ -1,18 +1,36 @@
 # Phase 3 dual-mode vhost: rendered once from KOHA_PATH; no post-boot gitify rewrite needed.
+# Phase 6: Plack (unix socket, koha-plack) is tried first via mod_proxy; any URL it
+# doesn't match falls through to the ExecCGI Directory blocks below. This mirrors
+# upstream Koha's apache-shared-{intranet,opac}-plack.conf, adapted for the
+# git-install root layout (KOHA_PATH) used by this dual-mode template.
 # Intranet VirtualHost
 <VirtualHost *:${KOHA_INTRANET_PORT}>
     ServerName  ${KOHA_INTRANET_FQDN}
     DocumentRoot ${KOHA_PATH}/koha-tmpl
-    ScriptAlias  /cgi-bin/koha/ ${KOHA_PATH}/
     Alias /doc/ /usr/share/doc/
     SetEnv KOHA_CONF /etc/koha/sites/${KOHA_INSTANCE}/koha-conf.xml
-    SetEnv PERL5LIB  ${KOHA_PATH}:${KOHA_LIB_PATH}
+    SetEnv PERL5LIB  /opt/koha-perl/lib/perl5:${KOHA_PATH}:${KOHA_LIB_PATH}
     SetEnv MEMCACHED_SERVERS memcached:11211
     SetEnv MEMCACHED_NAMESPACE ${KOHA_INSTANCE}
+    # Plack (via koha-plack, unix socket) is registered here, BEFORE the
+    # ScriptAlias/CGI directives pulled in by Include below, so it wins for any
+    # overlapping path (first-registered handler wins in Apache's URL mapping).
+    <IfModule mod_proxy_http.c>
+        ProxyPreserveHost On
+        ProxyPass /index.html "unix:/var/run/koha/${KOHA_INSTANCE}/plack.sock|http://localhost/intranet/mainpage.pl"
+        ProxyPassReverse /index.html "unix:/var/run/koha/${KOHA_INSTANCE}/plack.sock|http://localhost/intranet/mainpage.pl"
+        ProxyPass /cgi-bin/koha/svc "unix:/var/run/koha/${KOHA_INSTANCE}/plack.sock|http://localhost/intranet_svc"
+        ProxyPassReverse /cgi-bin/koha/svc "unix:/var/run/koha/${KOHA_INSTANCE}/plack.sock|http://localhost/intranet_svc"
+        ProxyPass /cgi-bin/koha "unix:/var/run/koha/${KOHA_INSTANCE}/plack.sock|http://localhost/intranet"
+        ProxyPassReverse /cgi-bin/koha "unix:/var/run/koha/${KOHA_INSTANCE}/plack.sock|http://localhost/intranet"
+        ProxyPass /api "unix:/var/run/koha/${KOHA_INSTANCE}/plack.sock|http://localhost/api"
+        ProxyPassReverse /api "unix:/var/run/koha/${KOHA_INSTANCE}/plack.sock|http://localhost/api"
+    </IfModule>
     Include /etc/koha/apache-shared.conf
     Include /etc/koha/apache-shared-intranet.conf
     <IfModule mod_rewrite.c>
         RewriteEngine On
+        RewriteRule ^/$ /index.html [PT]
     </IfModule>
     <Directory "${KOHA_PATH}">
         Options +ExecCGI +FollowSymlinks
@@ -31,15 +49,26 @@
 <VirtualHost *:${KOHA_OPAC_PORT}>
     ServerName  ${KOHA_OPAC_FQDN}
     DocumentRoot ${KOHA_PATH}/koha-tmpl
-    ScriptAlias  /cgi-bin/koha/opac/ ${KOHA_PATH}/opac/
     SetEnv KOHA_CONF /etc/koha/sites/${KOHA_INSTANCE}/koha-conf.xml
-    SetEnv PERL5LIB  ${KOHA_PATH}:${KOHA_LIB_PATH}
+    SetEnv PERL5LIB  /opt/koha-perl/lib/perl5:${KOHA_PATH}:${KOHA_LIB_PATH}
     SetEnv MEMCACHED_SERVERS memcached:11211
     SetEnv MEMCACHED_NAMESPACE ${KOHA_INSTANCE}
+    <IfModule mod_proxy_http.c>
+        ProxyPreserveHost On
+        ProxyPass /cgi-bin/koha "unix:/var/run/koha/${KOHA_INSTANCE}/plack.sock|http://localhost/opac"
+        ProxyPassReverse /cgi-bin/koha "unix:/var/run/koha/${KOHA_INSTANCE}/plack.sock|http://localhost/opac"
+        ProxyPass /index.html "unix:/var/run/koha/${KOHA_INSTANCE}/plack.sock|http://localhost/opac/opac-main.pl"
+        ProxyPassReverse /index.html "unix:/var/run/koha/${KOHA_INSTANCE}/plack.sock|http://localhost/opac/opac-main.pl"
+        ProxyPass /search "unix:/var/run/koha/${KOHA_INSTANCE}/plack.sock|http://localhost/opac/opac-search.pl"
+        ProxyPassReverse /search "unix:/var/run/koha/${KOHA_INSTANCE}/plack.sock|http://localhost/opac/opac-search.pl"
+        ProxyPass /api "unix:/var/run/koha/${KOHA_INSTANCE}/plack.sock|http://localhost/api"
+        ProxyPassReverse /api "unix:/var/run/koha/${KOHA_INSTANCE}/plack.sock|http://localhost/api"
+    </IfModule>
     Include /etc/koha/apache-shared.conf
     Include /etc/koha/apache-shared-opac.conf
     <IfModule mod_rewrite.c>
         RewriteEngine On
+        RewriteRule ^/$ /index.html [PT]
     </IfModule>
     <Directory "${KOHA_PATH}/opac">
         Options +ExecCGI +FollowSymlinks

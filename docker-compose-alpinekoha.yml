@@ -62,6 +62,9 @@ services:
       - ${OPENSEARCH_CA_CERT:-/dev/null}:/kohadevbox/opensearch-root-ca.pem:ro
       - ./files-alpine/mariadb-ssl:/etc/mysql/ssl:ro
       - ./files-alpine/run.sh:/usr/local/bin/run.sh:ro
+      - ./files-alpine/lib:/build/files-alpine/lib:ro
+      - ./files-alpine/scripts:/build/files-alpine/scripts:ro
+      - ./files-alpine/templates:/build/files-alpine/templates:ro
     tmpfs:
       - /cover_db
       - /tmp

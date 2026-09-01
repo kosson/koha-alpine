@@ -1,5 +1,16 @@
 #!/bin/bash
-# koha-plack Alpine - v10 - perl + log path fix
+# koha-plack Alpine - v11 - CGI-based plack.psgi over unix socket
+#
+# v10 (and every prior revision) started /kohadevbox/koha/app.psgi with
+# `plackup --port 5000`. That is fundamentally broken for this Koha checkout:
+#   1. app.psgi is the Mojolicious dual-port app; it requires Koha::App::Opac
+#      and Koha::App::Intranet, which do not exist in this Koha tree.
+#   2. Nothing in docker-compose/Traefik ever routed traffic to port 5000.
+# v11 switches to koha/debian/templates/plack.psgi (staged at /etc/koha/plack.psgi),
+# the CGI::CGIBin-based app used by real Koha packages. It works with this Koha
+# checkout, and is fronted by Apache mod_proxy (apache-shared-*-plack.conf,
+# included from the rendered vhost) over a unix socket — matching upstream Koha's
+# actual production architecture.
 set -e
 INSTANCE="${2:-${1:-kohadev}}"
 if [ "$1" = "--enable" ] || [ "$1" = "--disable" ]; then INSTANCE="${2:-kohadev}"; fi
@@ -8,21 +19,22 @@ if [ "$1" = "--start" ] || [ "$1" = "--stop" ] || [ "$1" = "--restart" ] || [ "$
 KOHA_PATH="${KOHA_PATH:-/kohadevbox/koha}"
 PERL5LIB_PATH="/opt/koha-perl/lib/perl5:${KOHA_PATH}/lib:${KOHA_PATH}"
 PLACKUP="/opt/koha-perl/bin/plackup"
-APP_PSGI="${KOHA_PATH}/app.psgi"
+PSGI_FILE="/etc/koha/sites/${INSTANCE}/plack.psgi"
+[ -f "$PSGI_FILE" ] || PSGI_FILE="/etc/koha/plack.psgi"
 LOG_DIR="/var/log/koha/${INSTANCE}"
 RUN_DIR="/var/run/koha/${INSTANCE}"
 PIDFILE="${RUN_DIR}/plack.pid"
+SOCKET="${RUN_DIR}/plack.sock"
 ERROR_LOG="${LOG_DIR}/plack-error.log"
 ACCESS_LOG="${LOG_DIR}/plack.log"
 
 mkdir -p "$LOG_DIR" "$RUN_DIR"
-chown -R kohadev:kohadev /var/log/koha /var/run/koha 2>/dev/null || true
+chown -R "${INSTANCE}-koha:${INSTANCE}-koha" "$LOG_DIR" "$RUN_DIR" 2>/dev/null || true
 touch "$ERROR_LOG" "$ACCESS_LOG"
-chown kohadev:kohadev "$ERROR_LOG" "$ACCESS_LOG" 2>/dev/null || true
+chown "${INSTANCE}-koha:${INSTANCE}-koha" "$ERROR_LOG" "$ACCESS_LOG" 2>/dev/null || true
 
 case "$1" in
   --enable)
-    mkdir -p /etc/koha/sites-enabled
     touch "/etc/koha/sites/${INSTANCE}/plack_enabled" 2>/dev/null || true
     echo "[plack] Enabled"
     exit 0
@@ -40,8 +52,7 @@ case "$1" in
         exit 0
       fi
     fi
-    # also check via pgrep
-    if pgrep -f "plackup.*${INSTANCE}" >/dev/null 2>&1 || pgrep -f "app.psgi" >/dev/null 2>&1; then
+    if pgrep -f "plackup.*${SOCKET}" >/dev/null 2>&1; then
       echo "[plack] running (pgrep)"
       exit 0
     fi
@@ -49,46 +60,47 @@ case "$1" in
     exit 1
     ;;
   --start)
-    echo "[plack] Starting $APP_PSGI on :5000 with /usr/bin/perl $PLACKUP"
-    if [ ! -f "$APP_PSGI" ]; then echo "[plack] $APP_PSGI not found"; exit 1; fi
-    PERL5LIB="$PERL5LIB_PATH" /usr/bin/perl -c "$APP_PSGI" 2>&1 | head -5 || true
-    echo "/kohadevbox/koha/app.psgi syntax OK"
-    # start daemon
-    rm -f "$PIDFILE"
-    PERL5LIB="$PERL5LIB_PATH" /usr/bin/perl "$PLACKUP" \
-      --server Starman \
-      --port 5000 \
-      --host 0.0.0.0 \
-      --pid "$PIDFILE" \
-      --error-log "$ERROR_LOG" \
-      --access-log "$ACCESS_LOG" \
-      -D \
-      "$APP_PSGI" 2>>"$ERROR_LOG" || {
-        # fallback try without Starman
-        PERL5LIB="$PERL5LIB_PATH" /usr/bin/perl "$PLACKUP" \
-          --port 5000 --host 0.0.0.0 --pid "$PIDFILE" -D "$APP_PSGI" 2>>"$ERROR_LOG" || true
-      }
+    if [ ! -f "$PSGI_FILE" ]; then echo "[plack] $PSGI_FILE not found"; exit 1; fi
+    echo "[plack] Starting $PSGI_FILE on unix socket $SOCKET"
+    rm -f "$PIDFILE" "$SOCKET"
+    export KOHA_CONF="/etc/koha/sites/${INSTANCE}/koha-conf.xml"
+    export KOHA_HOME="$KOHA_PATH"
+    export GIT_INSTALL=1
+    PERL5LIB="$PERL5LIB_PATH" /usr/bin/perl -c "$PSGI_FILE" >/dev/null 2>&1 || {
+      echo "[plack] $PSGI_FILE failed syntax check:"
+      PERL5LIB="$PERL5LIB_PATH" /usr/bin/perl -c "$PSGI_FILE" 2>&1 | tail -20
+      exit 1
+    }
+    PERL5LIB="$PERL5LIB_PATH" KOHA_CONF="$KOHA_CONF" KOHA_HOME="$KOHA_HOME" GIT_INSTALL=1 \
+      su "${INSTANCE}-koha" -s /bin/sh -c "\
+        exec '$PLACKUP' -M FindBin --server Starman --workers 2 -E deployment \
+          --socket '$SOCKET' --pid '$PIDFILE' -D \
+          --error-log '$ERROR_LOG' --access-log '$ACCESS_LOG' \
+          '$PSGI_FILE'" 2>>"$ERROR_LOG" || true
     sleep 2
-    if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
-      echo "[plack] Started pid=$(cat "$PIDFILE")"
+    # Alpine's Apache runs as the 'apache' user, not the instance user that owns
+    # this socket; without world read+write it connects with "Permission denied".
+    chmod 777 "$SOCKET" 2>/dev/null || true
+    if [ -S "$SOCKET" ] && [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+      echo "[plack] Started pid=$(cat "$PIDFILE") socket=$SOCKET"
       exit 0
     else
       echo "[plack] FAILED to start - see $ERROR_LOG"
-      cat "$ERROR_LOG" | tail -30
+      tail -30 "$ERROR_LOG" 2>/dev/null || true
       exit 1
     fi
     ;;
   --stop)
     if [ -f "$PIDFILE" ]; then kill "$(cat "$PIDFILE")" 2>/dev/null || true; rm -f "$PIDFILE"; fi
-    pkill -f "plackup.*$INSTANCE" 2>/dev/null || true
-    pkill -f "app.psgi" 2>/dev/null || true
+    pkill -f "plackup.*${SOCKET}" 2>/dev/null || true
+    rm -f "$SOCKET"
     echo "[plack] stopped"
     exit 0
     ;;
   --restart)
-    $0 --stop "$INSTANCE"
+    "$0" --stop "$INSTANCE"
     sleep 1
-    $0 --start "$INSTANCE"
+    "$0" --start "$INSTANCE"
     ;;
   *)
     echo "Usage: $0 --enable|--disable|--start|--stop|--restart|--status [instance]"

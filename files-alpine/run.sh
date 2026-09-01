@@ -139,23 +139,113 @@ fi
 echo "[run.sh] Ensuring base data"
 mysql -h ${DB_HOST} -u ${DB_USER} ${DB_NAME} -e "INSERT IGNORE INTO branches (branchcode,branchname) VALUES ('$ADMIN_BRANCH','Central Library'); INSERT IGNORE INTO categories (categorycode,description,upperagelimit) VALUES ('$ADMIN_CATEGORY','Staff',999),('S','Staff',999),('PT','Patron',999);"
 
-if ! mysql -h ${DB_HOST} -u ${DB_USER} ${DB_NAME} -e "SELECT 1 FROM borrowers WHERE userid='$ADMIN_USER' LIMIT 1" --silent | grep -q "1"; then
+# Idempotency must check BOTH userid and cardnumber: a stale DB volume from a
+# previous run/experiment can have cardnumber '1' taken by a differently-named
+# user, which would otherwise crash create_superlibrarian.pl under `set -e` and
+# take down the whole container (observed: "Field 'cardnumber' must be unique").
+ADMIN_EXISTS=$(mysql -h ${DB_HOST} -u ${DB_USER} ${DB_NAME} -Nse "SELECT 1 FROM borrowers WHERE userid='$ADMIN_USER' OR cardnumber='1' LIMIT 1" 2>/dev/null || true)
+if [ -z "$ADMIN_EXISTS" ]; then
   echo "[run.sh] Creating $ADMIN_USER"
-  su kohadev-koha -s /bin/sh -c "export KOHA_CONF=${KOHACONF} PERL5LIB=/opt/koha-perl/lib/perl5:${KOHADEVBOX}/lib:${KOHADEVBOX} KOHA_HOME=${KOHA_HOME}; cd ${KOHADEVBOX}; perl misc/devel/create_superlibrarian.pl --userid $ADMIN_USER --password $ADMIN_PASS --branchcode $ADMIN_BRANCH --categorycode $ADMIN_CATEGORY --cardnumber 1 --surname Admin"
-else echo "[run.sh] Superlibrarian $ADMIN_USER exists"; fi
+  if ! su kohadev-koha -s /bin/sh -c "export KOHA_CONF=${KOHACONF} PERL5LIB=/opt/koha-perl/lib/perl5:${KOHADEVBOX}/lib:${KOHADEVBOX} KOHA_HOME=${KOHA_HOME}; cd ${KOHADEVBOX}; perl misc/devel/create_superlibrarian.pl --userid $ADMIN_USER --password $ADMIN_PASS --branchcode $ADMIN_BRANCH --categorycode $ADMIN_CATEGORY --cardnumber 1 --surname Admin"; then
+    echo "[run.sh] WARNING: create_superlibrarian.pl failed; continuing startup (an admin account may already exist under a different userid/cardnumber)"
+  fi
+else
+  echo "[run.sh] Superlibrarian $ADMIN_USER (or cardnumber 1) already exists"
+fi
 
 chown -R kohadev-koha:kohadev-koha /etc/koha/sites/${KOHASITE} /var/log/koha/${KOHASITE} /var/run/koha/${KOHASITE} /var/lib/koha/${KOHASITE} /var/cache/koha/${KOHASITE} 2>/dev/null || true
 echo "[run.sh] updatedatabase"; su kohadev-koha -s /bin/sh -c "export KOHA_CONF=${KOHACONF} PERL5LIB=/opt/koha-perl/lib/perl5:${KOHADEVBOX}/lib:${KOHADEVBOX} KOHA_HOME=${KOHA_HOME}; cd ${KOHADEVBOX}; perl -Ilib installer/data/mysql/updatedatabase.pl"
 
-echo "[run.sh] Starting Plack on port 5000"
-PLACKUP_CMD="/opt/koha-perl/bin/plackup --port 5000 --host 0.0.0.0 --env production app.psgi"
-# Set environment variables for the koha user and execute plackup.
-# The final 'exec' replaces this shell process with the plackup process, making it the main container process.
-exec su kohadev-koha -s /bin/sh -c " \
-    export KOHA_CONF=${KOHACONF}; \
-    export LOG4PERL_CONF=/etc/koha/sites/${KOHASITE}/log4perl.conf; \
-    export PERL5LIB=/opt/koha-perl/lib/perl5:${KOHADEVBOX}/lib:${KOHADEVBOX}; \
-    export KOHA_HOME=${KOHA_HOME}; \
-    export PATH=/opt/koha-perl/bin:/usr/local/bin:/usr/bin:/bin; \
-    cd ${KOHADEVBOX}; \
-    exec ${PLACKUP_CMD}"
+# --- Apache + Plack + supervision -------------------------------------------
+# Historical note: earlier revisions of this script `exec`d a bare `plackup
+# --port 5000 app.psgi` here. That never worked: nothing routed traffic to
+# port 5000, and koha/app.psgi (the Mojolicious dual-port app) requires
+# Koha::App::Opac/Koha::App::Intranet, which do not exist in this Koha
+# checkout. We now start Apache (serving OPAC/staff on 8080/8081, matching
+# compose/Traefik) with mod_cgi as the always-working baseline, and try to
+# layer real Plack (koha-plack -> debian's CGI-based plack.psgi over a unix
+# socket, proxied by Apache) on top via the restored run-sh-alpine.sh helpers.
+. /build/files-alpine/lib/run-sh-alpine.sh
+
+# render_vhost() (from run-sh-alpine.sh) reads ${BUILD_DIR}/templates/koha-vhost.conf.in.
+# Templates are bind-mounted (dev) / COPY'd (image) to /build/files-alpine/templates.
+export BUILD_DIR=/build/files-alpine
+export KOHA_INSTANCE=${KOHASITE}
+export KOHA_PATH=${KOHADEVBOX}
+export KOHA_LIB_PATH=${KOHADEVBOX}/lib
+export KOHA_INTRANET_PORT=${KOHA_INTRANET_PORT:-8081}
+export KOHA_OPAC_PORT=${KOHA_OPAC_PORT:-8080}
+export KOHA_INTRANET_FQDN=${KOHA_INTRANET_PREFIX}${KOHASITE}${KOHA_INTRANET_SUFFIX}${KOHA_DOMAIN}
+export KOHA_OPAC_FQDN=${KOHA_OPAC_PREFIX}${KOHASITE}${KOHA_OPAC_SUFFIX}${KOHA_DOMAIN}
+VARS_TO_SUB='$KOHA_INTRANET_PORT:$KOHA_INTRANET_FQDN:$KOHA_OPAC_PORT:$KOHA_OPAC_FQDN:$KOHA_PATH:$KOHA_LIB_PATH:$KOHA_INSTANCE'
+
+# Install the Alpine-native koha-plack/koha-worker/koha-create scripts. These
+# are not baked into /usr/sbin by the Dockerfile (only files-alpine/run.sh is);
+# install them here so enable_instance_services/start_koha_service can find them.
+for _script in koha-create koha-plack koha-worker koha-functions.sh; do
+    if [ -f "${BUILD_DIR}/scripts/${_script}" ]; then
+        install -m 0755 "${BUILD_DIR}/scripts/${_script}" "/usr/sbin/${_script}"
+    fi
+done
+unset _script
+
+echo "[alpine] Enabling mod_cgi/mod_proxy modules for Apache..."
+sed -i \
+    -e 's/^[[:space:]]*#LoadModule cgi_module modules\/mod_cgi\.so/LoadModule cgi_module modules\/mod_cgi.so/' \
+    -e 's/^[[:space:]]*#LoadModule proxy_module modules\/mod_proxy\.so/LoadModule proxy_module modules\/mod_proxy.so/' \
+    -e 's/^[[:space:]]*#LoadModule proxy_http_module modules\/mod_proxy_http\.so/LoadModule proxy_http_module modules\/mod_proxy_http.so/' \
+    -e 's/^[[:space:]]*#LoadModule rewrite_module modules\/mod_rewrite\.so/LoadModule rewrite_module modules\/mod_rewrite.so/' \
+    /etc/apache2/httpd.conf 2>/dev/null || true
+append_if_absent "ServerName kohadevbox"          /etc/apache2/httpd.conf 2>/dev/null || true
+append_if_absent "Listen ${KOHA_INTRANET_PORT}"   /etc/apache2/httpd.conf 2>/dev/null || true
+append_if_absent "Listen ${KOHA_OPAC_PORT}"       /etc/apache2/httpd.conf 2>/dev/null || true
+# Alpine's httpd.conf (unlike Debian's apache2.conf) has no sites-enabled Include
+# by default; without this the rendered vhost is silently ignored and Apache
+# just serves its "It works!" default page on every port.
+append_if_absent "IncludeOptional /etc/apache2/sites-enabled/*.conf" /etc/apache2/httpd.conf 2>/dev/null || true
+
+# apache-shared.conf/apache-shared-{intranet,opac}.conf (Included from the vhost
+# template) are the real Koha files and hardcode Debian package paths
+# (/usr/share/koha/*). Rewrite them for the git-install layout so they don't
+# clobber our vhost's DocumentRoot/PERL5LIB with paths that don't exist here.
+sed -i '/^[[:space:]]*SetEnv PERL5LIB[[:space:]]/d' /etc/koha/apache-shared.conf 2>/dev/null || true
+sed -i "/^[[:space:]]*DocumentRoot[[:space:]]/d; \
+        /^[[:space:]]*ScriptAlias \/index.html/d; \
+        /^[[:space:]]*ScriptAlias \/search/d; \
+        s|/usr/share/koha/intranet/cgi-bin|${KOHA_PATH}|g; \
+        s|/usr/share/koha/api|${KOHA_PATH}/api|g" \
+    /etc/koha/apache-shared-intranet.conf 2>/dev/null || true
+sed -i "/^[[:space:]]*DocumentRoot[[:space:]]/d; \
+        /^[[:space:]]*ScriptAlias \/index.html/d; \
+        /^[[:space:]]*ScriptAlias \/search/d; \
+        /^[[:space:]]*ScriptAlias \/opac-search.pl/d; \
+        s|/usr/share/koha/opac/cgi-bin/opac|${KOHA_PATH}/opac|g; \
+        s|/usr/share/koha/api|${KOHA_PATH}/api|g" \
+    /etc/koha/apache-shared-opac.conf 2>/dev/null || true
+
+mkdir -p /etc/apache2/sites-available /etc/apache2/sites-enabled
+render_vhost "${KOHASITE}"
+ln -sf "/etc/apache2/sites-available/${KOHASITE}.conf" "/etc/apache2/sites-enabled/${KOHASITE}.conf"
+
+chmod 644 "${KOHACONF}" 2>/dev/null || true
+chmod 666 /var/log/koha/${KOHASITE}/*.log 2>/dev/null || true
+
+# Alpine's Apache runs CGI as the 'apache' user (no AssignUserID/suexec support),
+# unlike Debian where CGI runs as '<instance>-koha'. Without this, Template
+# Toolkit's cache mkdir (and log4perl appenders) fail with "Permission denied"
+# for every CGI request, producing 500s even though Apache itself is healthy.
+chmod -R 777 /var/cache/koha/${KOHASITE} 2>/dev/null || true
+chmod -R 777 /var/log/koha/${KOHASITE} 2>/dev/null || true
+chmod -R 777 /var/run/koha/${KOHASITE} 2>/dev/null || true
+
+stop_apache_service
+start_apache_service
+
+enable_instance_services
+start_koha_service
+start_crond
+
+touch /kohadevbox/koha/.alpine-bootstrap-complete
+echo "[run.sh] Startup complete - OPAC on :${KOHA_OPAC_PORT}, staff on :${KOHA_INTRANET_PORT}"
+
+run_service_watchdog "${KOHASITE}"
