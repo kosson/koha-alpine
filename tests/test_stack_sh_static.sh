@@ -47,6 +47,9 @@ assert_contains "stack script probes for populated DB before no-fresh-db shortcu
 assert_contains "stack script falls back when no-fresh-db hits an empty DB" 'falling back to fresh bootstrap'
 assert_contains "stack script checks for bootstrap completion marker" 'koha_bootstrap_marker_present()'
 assert_contains "bootstrap marker is cleared on reset" 'rm -f "${BOOTSTRAP_MARKER}"'
+assert_contains "language automation checks available translation catalog" 'koha_translation_catalog_available'
+assert_contains "language automation skips unsupported locale IDs" 'Unsupported language tag'
+assert_contains "translation wait logs check milestones and debugging hints" 'Debugging checklist'
 
 echo ""
 echo "1..${_N}"

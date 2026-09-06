@@ -52,8 +52,15 @@ assert_not_contains "no cp_debian_files.pl fallback remains" "cp_debian_files.pl
 
 # --- Dockerfile checks ---
 assert_not_contains "koha source directory not copied into build context" "COPY koha /tmp/koha-build-src" "${DOCKERFILE}"
+assert_contains "prod-runtime installs JS deps before build" "CYPRESS_INSTALL_BINARY=0 yarn install --frozen-lockfile" "${DOCKERFILE}"
+assert_contains "prod-runtime generates CSS bundles before packaging" "yarn css:build" "${DOCKERFILE}"
+assert_contains "prod-runtime generates JS bundles before packaging" "yarn js:build" "${DOCKERFILE}"
 assert_contains "prod-runtime stages assets from fetched git source" "/usr/local/bin/build-alpine-package.sh /kohadevbox/koha" "${DOCKERFILE}"
 assert_contains "SKIP_RUNTIME_ASSET_COPY set in prod-runtime" "ENV SKIP_RUNTIME_ASSET_COPY=yes" "${DOCKERFILE}"
+
+# --- bootstrap runtime checks ---
+assert_contains "runtime bootstrap checks for missing CSS bundles" "yarn css:build" "${ROOT_DIR}/files-alpine/run.sh"
+assert_contains "runtime bootstrap checks for missing JS bundles" "yarn js:build" "${ROOT_DIR}/files-alpine/run.sh"
 
 echo ""
 echo "1..${_N}"

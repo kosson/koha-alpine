@@ -1303,6 +1303,48 @@ docker compose -f docker-compose-alpinekoha.yml logs --tail=120 koha
 ./test-endpoints.sh
 ```
 
+#### Frontend asset build fails with `Permission denied` and CSS/JS never loads
+
+**Cause:** A stale `koha/node_modules` directory was created or modified by a root shell, so the repo now has a root-owned dependency tree. This commonly happens after an earlier Docker or package install step was run with elevated permissions. The failure is not a browser issue, and it is not a cache problem: the generated frontend bundles are missing because the build is blocked before the asset pipeline can complete.
+
+This matters because the production image is designed to skip runtime asset copying. In [Dockerfile-Alpine](Dockerfile-Alpine), the production image runs `yarn install --frozen-lockfile`, `yarn css:build`, and `yarn js:build` before packaging. In [files-alpine/run.sh](files-alpine/run.sh), runtime startup sets `SKIP_RUNTIME_ASSET_COPY=yes`, which intentionally disables a runtime copy step. If the generated CSS/JS bundles are absent from the image, the OPAC and staff UI will load HTML but will not receive the expected stylesheet and JavaScript assets.
+
+**Repair step (run this only when the tree is stale or root-owned):**
+
+```bash
+cd /mnt/beckie2/DEVELOPMENT/koha-alpine/koha
+sudo chown -R "$(id -u):$(id -g)" .
+rm -rf node_modules
+yarn install --frozen-lockfile
+yarn css:build
+yarn js:build
+ls -l koha-tmpl/opac-tmpl/bootstrap/css/opac.css \
+      koha-tmpl/intranet-tmpl/prog/css/staff-global.css \
+      koha-tmpl/opac-tmpl/bootstrap/js/global.js \
+      koha-tmpl/intranet-tmpl/prog/js/staff-global.js
+```
+
+**Then rebuild the image and restart the stack:**
+
+```bash
+cd /mnt/beckie2/DEVELOPMENT/koha-alpine
+./stack-alpine.sh build --image-mode prod --build-koha
+./stack-alpine.sh start
+```
+
+**Why this is not a normal workflow:**
+
+This is a repair for a stale filesystem state, not a command you should run every time. The normal, healthy development flow is:
+
+```bash
+cd /mnt/beckie2/DEVELOPMENT/koha-alpine/koha
+yarn install --frozen-lockfile
+yarn css:build
+yarn js:build
+```
+
+You only need the `chown` and `rm -rf node_modules` steps when the dependency tree becomes root-owned or a previous run left a stale install behind. Keeping the repo owned by the developer user and avoiding root-run package operations prevents the issue.
+
 ### Runtime Issues
 
 #### HTTP 500 errors in browser

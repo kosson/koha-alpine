@@ -251,14 +251,62 @@ configure_koha_mode() {
   DB_CONTAINER="${KOHA_COMPOSE_PROJECT}-db-1"
 }
 
+koha_translation_runtime_status() {
+  local translator="waiting" catalog="waiting" ktd_ready="waiting" instance_site="waiting" instance_user="waiting" shell_ready="waiting"
+
+  if koha_compose exec -T koha bash -lc "test -x /kohadevbox/koha/misc/translator/translate" >/dev/null 2>&1; then
+    translator="ready"
+  fi
+  if koha_compose exec -T koha bash -lc "test -d /kohadevbox/koha/misc/translator/po" >/dev/null 2>&1; then
+    catalog="ready"
+  fi
+  if koha_compose exec -T koha bash -lc "test -f /ktd_ready" >/dev/null 2>&1; then
+    ktd_ready="ready"
+  fi
+  if koha_compose exec -T koha bash -lc "test -d /etc/koha/sites/${KOHA_INSTANCE}" >/dev/null 2>&1; then
+    instance_site="ready"
+  fi
+  if koha_compose exec -T koha bash -lc "id ${KOHA_INSTANCE}-koha >/dev/null 2>&1" >/dev/null 2>&1; then
+    instance_user="ready"
+  fi
+  if koha_compose exec -T koha bash -lc "sudo koha-shell ${KOHA_INSTANCE} -p -c 'true' >/dev/null 2>&1" >/dev/null 2>&1; then
+    shell_ready="ready"
+  fi
+
+  printf '%s' "translator=${translator}, catalog=${catalog}, /ktd_ready=${ktd_ready}, site=${instance_site}, user=${instance_user}, shell=${shell_ready}"
+}
+
+koha_translation_runtime_wait_display() {
+  local attempts="$1"
+  local max="$2"
+  local status
+  status="$(koha_translation_runtime_status)"
+  printf '\r  [%d/%d] waiting: %s' "${attempts}" "${max}" "${status}"
+  printf ' %-60s' ""
+}
+
+koha_translation_runtime_debug_hint() {
+  cat <<'EOF'
+Debugging checklist:
+  1) Inspect the Koha container logs: ./stack-alpine.sh logs
+  2) Check whether the translator exists: docker compose -f docker-compose-alpinekoha.yml exec -T koha ls -l /kohadevbox/koha/misc/translator
+  3) Check the Po catalog: docker compose -f docker-compose-alpinekoha.yml exec -T koha ls -1 /kohadevbox/koha/misc/translator/po | head
+  4) Check readiness markers: docker compose -f docker-compose-alpinekoha.yml exec -T koha ls -l /ktd_ready /etc/koha/sites/${KOHA_INSTANCE}
+  5) Verify shell access: docker compose -f docker-compose-alpinekoha.yml exec -T koha sudo koha-shell ${KOHA_INSTANCE} -p -c 'true'
+  6) If locale install is the issue, review KOHA_DESIRED_LANGUAGES in env/.env and skip unsupported tags
+EOF
+}
+
 wait_translation_runtime() {
   local attempts=0
   local max=350
 
   log "Waiting for Koha translation runtime and full startup readiness for instance '${KOHA_INSTANCE}'..."
+  log "This wait is for the final /ktd_ready marker written after the Koha container finishes its bootstrap and service startup."
+  log "The translation catalog is checked later during language configuration; a missing /misc/translator/po is not treated as a fatal startup blocker."
+  log "Progress checkpoints: translator binary, /ktd_ready, instance config dir, instance user, and koha-shell test."
   until koha_compose exec -T koha bash -lc "
     test -x /kohadevbox/koha/misc/translator/translate &&
-    test -d /kohadevbox/koha/misc/translator/po &&
     test -f /ktd_ready &&
     test -d /etc/koha/sites/${KOHA_INSTANCE} &&
     id ${KOHA_INSTANCE}-koha >/dev/null 2>&1 &&
@@ -267,13 +315,42 @@ wait_translation_runtime() {
     (( ++attempts ))
     if (( attempts >= max )); then
       echo ""
+      warn "Koha translation runtime did not become ready after $(( max * 4 )) seconds."
+      warn "This usually means the container is still booting or the Koha bootstrap has not yet reached /ktd_ready."
+      warn "If the translator catalog is missing, the later language step will skip unsupported locales instead of blocking startup."
+      echo ""
+      koha_translation_runtime_debug_hint
+      echo ""
       die "Koha translation runtime/full startup for instance '${KOHA_INSTANCE}' did not become ready after $(( max * 4 )) seconds"
     fi
-    printf "\r  [%d/%d] waiting..." "${attempts}" "${max}"
+    koha_translation_runtime_wait_display "${attempts}" "${max}"
     sleep 4
   done
   echo ""
   ok "Koha translation runtime and full startup for instance '${KOHA_INSTANCE}' are ready."
+}
+
+koha_translation_catalog_available() {
+  local lang="${1:-}"
+  local catalog_dir="/kohadevbox/koha/misc/translator/po"
+
+  koha_compose exec -T koha bash -lc "
+    set +e
+    if [[ ! -d '${catalog_dir}' ]]; then
+      exit 1
+    fi
+    shopt -s nullglob
+    if [[ -n '${lang}' ]]; then
+      for pattern in \"${catalog_dir}/${lang}-*.po\" \"${catalog_dir}/${lang}-*.po.gz\" \"${catalog_dir}/${lang}_*.po\" \"${catalog_dir}/${lang}_*.po.gz\"; do
+        [[ -e \"\$pattern\" ]] && exit 0
+      done
+      exit 1
+    fi
+    for pattern in \"${catalog_dir}"/*.po \"${catalog_dir}"/*.po.gz; do
+      [[ -e \"\$pattern\" ]] && exit 0
+    done
+    exit 1
+  " >/dev/null 2>&1
 }
 
 configure_koha_languages() {
@@ -294,16 +371,58 @@ configure_koha_languages() {
 
   local -a languages=()
   local -a install_languages=()
+  local -a effective_languages=()
   local -a failed_languages=()
   local lang
   IFS=',' read -r -a languages <<<"${normalized_languages}"
+
+  wait_translation_runtime
+
+  local -a catalog_languages=()
+  while IFS= read -r lang; do
+    [[ -n "${lang}" ]] && catalog_languages+=("${lang}")
+  done < <(koha_compose exec -T koha bash -lc "
+    shopt -s nullglob
+    for f in /kohadevbox/koha/misc/translator/po/*-pref.po /kohadevbox/koha/misc/translator/po/*-pref.po.gz; do
+      [[ -e \"\$f\" ]] || continue
+      b=\$(basename \"\$f\")
+      echo \"\${b%-pref.po}\"
+      echo \"\${b%-pref.po.gz}\"
+    done | sort -u
+  " 2>/dev/null || true)
+
   for lang in "${languages[@]}"; do
-    [[ "${lang}" == "en" ]] && continue
+    if [[ "${lang}" == "en" ]]; then
+      effective_languages+=("${lang}")
+      continue
+    fi
+
+    if ((${#catalog_languages[@]} > 0)); then
+      local supported=false
+      for catalog_lang in "${catalog_languages[@]}"; do
+        if [[ "${catalog_lang}" == "${lang}" ]]; then
+          supported=true
+          break
+        fi
+      done
+      if [[ "${supported}" == "false" ]]; then
+        warn "Unsupported language tag '${lang}' for this Koha build: no matching translation catalog entry found under /kohadevbox/koha/misc/translator/po; skipping to avoid a startup stall."
+        continue
+      fi
+    else
+      warn "Unsupported language tag '${lang}': Koha translation catalog is empty or missing; skipping to avoid a startup stall."
+      continue
+    fi
+
     install_languages+=("${lang}")
+    effective_languages+=("${lang}")
   done
 
+  if (( ${#effective_languages[@]} == 0 )); then
+    effective_languages=("en")
+  fi
+
   if (( ${#install_languages[@]} > 0 )); then
-    wait_translation_runtime
     for lang in "${install_languages[@]}"; do
       if [[ "${reinstall}" == "no" ]]; then
         if koha_compose exec -T koha bash -lc "test -d /usr/share/koha/intranet/htdocs/intranet-tmpl/prog/${lang} && test -d /usr/share/koha/opac/htdocs/opac-tmpl/bootstrap/${lang}" >/dev/null 2>&1; then
@@ -314,17 +433,20 @@ configure_koha_languages() {
 
       log "Installing translation pack: ${lang}"
       if ! koha_compose exec -T koha bash -lc "export KOHA_CONF=/etc/koha/sites/${KOHA_INSTANCE}/koha-conf.xml PERL5LIB=\"/kohadevbox/koha:/kohadevbox/koha/lib:\${PERL5LIB}\"; cd /kohadevbox/koha/misc/translator && ./translate install ${lang}"; then
-        warn "Translation install failed for ${lang}; continuing startup. Check Perl module dependencies in container (e.g. Locale::PO)."
+        warn "Translation install failed for ${lang}; continuing startup. Check Perl module dependencies in container (e.g. Locale::PO) and verify the locale is available in the Koha translation catalog."
         failed_languages+=("${lang}")
       fi
     done
   else
-    log "No extra translation packs requested (only 'en')."
+    log "No extra translation packs requested or available for this Koha build (only 'en' remains active)."
   fi
 
   if (( ${#failed_languages[@]} > 0 )); then
     warn "Some translation packs failed to install: ${failed_languages[*]}"
   fi
+
+  local effective_languages_csv
+  effective_languages_csv="$(IFS=,; echo "${effective_languages[*]}")"
 
   log "Applying language preferences to database (${DB_NAME})"
   local _has_systempreferences
@@ -338,8 +460,8 @@ configure_koha_languages() {
   fi
 
   docker exec "${DB_CONTAINER}" mysql -uroot -p"${KOHA_DB_ROOT_PASSWORD}" "${DB_NAME}" -e "
-UPDATE systempreferences SET value='${normalized_languages}' WHERE variable='StaffInterfaceLanguages';
-UPDATE systempreferences SET value='${normalized_languages}' WHERE variable='OPACLanguages';
+UPDATE systempreferences SET value='${effective_languages_csv}' WHERE variable='StaffInterfaceLanguages';
+UPDATE systempreferences SET value='${effective_languages_csv}' WHERE variable='OPACLanguages';
 UPDATE systempreferences SET value='${opac_display}' WHERE variable='opaclanguagesdisplay';
 "
 
@@ -347,7 +469,7 @@ UPDATE systempreferences SET value='${opac_display}' WHERE variable='opaclanguag
     warn "Could not run clear_cache.pl automatically; changes still applied and will take effect after cache expiry/restart."
   fi
 
-  ok "Language configuration applied: Staff/OPAC=${normalized_languages}, opaclanguagesdisplay=${opac_display}"
+  ok "Language configuration applied: Staff/OPAC=${effective_languages_csv}, opaclanguagesdisplay=${opac_display}"
 }
 
 # ---------------------------------------------------------------------------

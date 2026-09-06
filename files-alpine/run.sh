@@ -400,6 +400,17 @@ else
     cd /
 fi
 
+# Ensure built theme bundles exist even when the source tree is mounted from a fresh checkout.
+if [ -d /kohadevbox/koha/koha-tmpl ] && [ ! -f /kohadevbox/koha/koha-tmpl/opac-tmpl/bootstrap/css/opac.css ] && [ ! -f /kohadevbox/koha/koha-tmpl/intranet-tmpl/prog/css/staff-global.css ]; then
+    echo "[assets] Compiling missing CSS bundles during runtime bootstrap"
+    cd /kohadevbox/koha && yarn css:build
+fi
+
+if [ -d /kohadevbox/koha/koha-tmpl ] && [ ! -f /kohadevbox/koha/koha-tmpl/opac-tmpl/bootstrap/js/global.js ] && [ ! -f /kohadevbox/koha/koha-tmpl/intranet-tmpl/prog/js/staff-global.js ]; then
+    echo "[assets] Compiling missing JS bundles during runtime bootstrap"
+    cd /kohadevbox/koha && yarn js:build
+fi
+
 # Update /etc/hosts so the www tests can run
 echo "127.0.0.1    ${KOHA_OPAC_FQDN} ${KOHA_INTRANET_FQDN}" >> /etc/hosts
 

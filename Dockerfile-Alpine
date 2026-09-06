@@ -380,9 +380,11 @@ RUN test -n "${KOHA_GIT_REF}" || { echo "ERROR: KOHA_GIT_REF is required. Set KO
     && git -C /kohadevbox/koha fetch --depth "${KOHA_GIT_DEPTH}" origin "${KOHA_GIT_REF}" \
     && git -C /kohadevbox/koha checkout --detach FETCH_HEAD
 
-# Pre-install JS dependencies and stage runtime assets, then clean build caches.
+# Pre-install JS dependencies, compile the browser CSS/JS bundles, then stage runtime assets.
 RUN cd /kohadevbox/koha \
     && CYPRESS_INSTALL_BINARY=0 yarn install --frozen-lockfile \
+    && yarn css:build \
+    && yarn js:build \
     && /usr/local/bin/build-alpine-package.sh /kohadevbox/koha \
     && rm -rf /kohadevbox/koha/node_modules \
     && rm -rf /kohadevbox/koha/.git \
