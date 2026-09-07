@@ -581,33 +581,84 @@ ensure_koha_source() {
 }
 
 prepare_mariadb_client_tls() {
-  hdr "Preparing MariaDB client TLS materials"
+  hdr "Preparing MariaDB TLS materials"
 
   command -v openssl >/dev/null 2>&1 || die "openssl not found in PATH"
 
-  local ca_cert ca_key ca_srl client_key client_csr client_cert client_ext
+  local ca_cert ca_key ca_srl server_key server_csr server_cert server_ext
+  local client_key client_csr client_cert client_ext mariadb_ssl_cnf
   ca_cert="${MARIADB_SSL_DIR}/ca-cert.pem"
   ca_key="${MARIADB_SSL_DIR}/ca-key.pem"
   ca_srl="${MARIADB_SSL_DIR}/ca-cert.srl"
+  server_key="${MARIADB_SSL_DIR}/server-key.pem"
+  server_csr="${MARIADB_SSL_DIR}/server.csr"
+  server_cert="${MARIADB_SSL_DIR}/server-cert.pem"
+  server_ext="${MARIADB_SSL_DIR}/server-ext.cnf"
   client_key="${MARIADB_SSL_DIR}/client-key.pem"
   client_csr="${MARIADB_SSL_DIR}/client.csr"
   client_cert="${MARIADB_SSL_DIR}/client-cert.pem"
   client_ext="${MARIADB_SSL_DIR}/client-ext.cnf"
-
-  [[ -f "${ca_cert}" ]] || die "Missing CA certificate: ${ca_cert}"
-  [[ -f "${ca_key}" ]] || die "Missing CA private key: ${ca_key}"
+  mariadb_ssl_cnf="${MARIADB_SSL_DIR}/mariadb-ssl.cnf"
 
   mkdir -p "${MARIADB_SSL_DIR}"
 
-  if [[ "${FORCE_CLIENT_TLS_REGEN}" != true ]] && [[ -f "${client_key}" && -f "${client_cert}" ]]; then
-    ok "Client TLS cert/key already present. Reusing existing files."
+  if [[ "${FORCE_CLIENT_TLS_REGEN}" == true ]]; then
+    warn "Forced regeneration requested; deleting any stale MariaDB TLS materials."
+    rm -f "${ca_cert}" "${ca_key}" "${ca_srl}" "${server_key}" "${server_csr}" "${server_cert}" "${server_ext}" "${client_key}" "${client_csr}" "${client_cert}" "${client_ext}" "${mariadb_ssl_cnf}"
+  fi
+
+  if [[ ! -f "${ca_cert}" || ! -f "${ca_key}" ]] || ! openssl x509 -in "${ca_cert}" -noout >/dev/null 2>&1 || ! openssl pkey -in "${ca_key}" -noout >/dev/null 2>&1; then
+    warn "Missing or invalid CA materials; creating a fresh local MariaDB CA."
+    rm -f "${ca_cert}" "${ca_key}" "${ca_srl}"
+    openssl genrsa -out "${ca_key}" 4096 >/dev/null 2>&1
+    openssl req -new -x509 -nodes -days 3650 -sha256 \
+      -key "${ca_key}" -out "${ca_cert}" \
+      -subj "/CN=koha-mariadb-ca" >/dev/null 2>&1
+    echo "01" > "${ca_srl}"
+    ok "Generated new CA certificate: ${ca_cert}"
   else
-    log "Generating client TLS key/certificate signed by ${ca_cert}"
+    ok "CA certificate and private key look valid."
+  fi
+
+  if [[ ! -f "${server_ext}" ]]; then
+    cat > "${server_ext}" <<'EOF'
+subjectAltName = DNS:db,DNS:localhost,DNS:koha,IP:127.0.0.1,IP:::1
+extendedKeyUsage = serverAuth
+keyUsage = digitalSignature,keyEncipherment
+EOF
+  fi
+
+  if [[ ! -f "${server_key}" || ! -f "${server_cert}" ]] || ! openssl verify -CAfile "${ca_cert}" "${server_cert}" >/dev/null 2>&1; then
+    warn "Missing or invalid MariaDB server certificate; generating a fresh server cert."
+    rm -f "${server_key}" "${server_csr}" "${server_cert}"
+    openssl genrsa -out "${server_key}" 2048 >/dev/null 2>&1
+    openssl req -new -key "${server_key}" -subj "/CN=db" -out "${server_csr}" >/dev/null 2>&1
+    openssl x509 -req \
+      -in "${server_csr}" \
+      -CA "${ca_cert}" \
+      -CAkey "${ca_key}" \
+      -CAserial "${ca_srl}" \
+      -out "${server_cert}" \
+      -days 3650 \
+      -sha256 \
+      -extfile "${server_ext}" >/dev/null 2>&1
+    rm -f "${server_csr}"
+    ok "Generated MariaDB server certificate."
+  else
+    ok "MariaDB server certificate already present and signed by the local CA."
+  fi
+
+  if [[ ! -f "${client_ext}" ]]; then
     cat > "${client_ext}" <<'EOF'
 extendedKeyUsage = clientAuth
 keyUsage = digitalSignature,keyEncipherment
-subjectAltName = DNS:koha,IP:127.0.0.1
+subjectAltName = DNS:koha,DNS:localhost,IP:127.0.0.1
 EOF
+  fi
+
+  if [[ ! -f "${client_key}" || ! -f "${client_cert}" ]] || ! openssl verify -CAfile "${ca_cert}" "${client_cert}" >/dev/null 2>&1; then
+    warn "Missing or invalid MariaDB client certificate; generating a new client cert."
+    rm -f "${client_key}" "${client_csr}" "${client_cert}"
     openssl genrsa -out "${client_key}" 2048 >/dev/null 2>&1
     openssl req -new -key "${client_key}" -subj "/CN=koha-client" -out "${client_csr}" >/dev/null 2>&1
     openssl x509 -req \
@@ -620,18 +671,33 @@ EOF
       -sha256 \
       -extfile "${client_ext}" >/dev/null 2>&1
     rm -f "${client_csr}"
-    ok "Client TLS certificate generated."
+    ok "Generated MariaDB client certificate."
+  else
+    ok "MariaDB client certificate already present and signed by the local CA."
   fi
 
-  # Readable by Apache CGI inside read-only bind mount.
-  chmod 644 "${client_key}" "${client_cert}" "${client_ext}" 2>/dev/null || true
+  if [[ ! -f "${mariadb_ssl_cnf}" ]]; then
+    cat > "${mariadb_ssl_cnf}" <<'EOF'
+[mariadb]
+ssl-ca = /etc/mysql/ssl/ca-cert.pem
+ssl-cert = /etc/mysql/ssl/server-cert.pem
+ssl-key = /etc/mysql/ssl/server-key.pem
+require_secure_transport = ON
+EOF
+  fi
 
+  chmod 600 "${ca_key}" 2>/dev/null || true
+  chmod 644 "${server_key}" "${client_key}" 2>/dev/null || true
+  chmod 644 "${ca_cert}" "${server_cert}" "${client_cert}" "${server_ext}" "${client_ext}" "${mariadb_ssl_cnf}" 2>/dev/null || true
+
+  _set_env_val "${KOHA_ENV_FILE}" "KOHA_DB_TLS_CA_CERTIFICATE" "/etc/mysql/ssl/ca-cert.pem"
   _set_env_val "${KOHA_ENV_FILE}" "KOHA_DB_TLS_CLIENT_CERTIFICATE" "/etc/mysql/ssl/client-cert.pem"
   _set_env_val "${KOHA_ENV_FILE}" "KOHA_DB_TLS_CLIENT_KEY" "/etc/mysql/ssl/client-key.pem"
   reload_runtime_config
 
-  ok "Configured env/.env for Koha DB client TLS cert/key."
-  log "Values set: KOHA_DB_TLS_CLIENT_CERTIFICATE=/etc/mysql/ssl/client-cert.pem"
+  ok "Configured env/.env for MariaDB TLS material."
+  log "Values set: KOHA_DB_TLS_CA_CERTIFICATE=/etc/mysql/ssl/ca-cert.pem"
+  log "           KOHA_DB_TLS_CLIENT_CERTIFICATE=/etc/mysql/ssl/client-cert.pem"
   log "           KOHA_DB_TLS_CLIENT_KEY=/etc/mysql/ssl/client-key.pem"
 }
 
@@ -920,12 +986,20 @@ wait_db_ready() {
       ok "MariaDB is ready."
       return 0
     fi
+
+    if docker ps --format '{{.Names}}' | grep -Fxq "${DB_CONTAINER}"; then
+      warn "MariaDB is running but is rejecting the configured root password."
+      warn "This usually means a stale 'koha-db-data' volume was initialized with a different password."
+      warn "Check: docker volume ls | grep koha-db-data"
+      warn "Fix: restore the original KOHA_DB_ROOT_PASSWORD or remove the volume and recreate the database."
+    fi
+
     (( ++attempts ))
     printf "\r  [%d/%d] waiting..." "${attempts}" "${max}"
     sleep 2
   done
   echo ""
-  die "MariaDB did not become ready after $(( max * 2 )) seconds. Check KOHA_DB_ROOT_PASSWORD in env/.env. If koha-db-data already exists from an older password, run './$(basename "$0") reset' (destructive) or restore the old password in env/.env."
+  die "MariaDB did not become ready after $(( max * 2 )) seconds. Check KOHA_DB_ROOT_PASSWORD in env/.env. This usually means the existing 'koha-db-data' volume was initialized with a different root password. Restore the old password or run './$(basename "$0") reset' (destructive) to recreate the database volume."
 }
 
 reset_database() {

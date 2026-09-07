@@ -126,7 +126,38 @@ If all goes well, start the cluster for the first time to ensure a green light.
 ./raise-from-ground-up.sh
 ```
 
-If the cluster is raised and green (message in Terminal: `[raise-from-ground-up] Cluster status=yellow, nodes=5`), bring it down before the next step `docker compose down -v --remove-orphans`. It will be brought back soon enough by another script in the next step. Remember to go up a level to the root directory if the project: `cd ..`.
+If the cluster is raised and green (message in Terminal: `[raise-from-ground-up] Cluster status=green, nodes=5`), bring it down before the next step `docker compose down -v --remove-orphans`. It will be brought back soon enough by another script in the next step. Remember to go up a level to the root directory if the project: `cd ..`.
+
+You should see a response similar to the following in the Terminal:
+
+```log
+ ✔ Container os01       Healthy                                                                                                                                                                                                                 0.6s
+ ✔ Container dashboards Started                                                                                                                                                                                                                 0.8s
+[raise-from-ground-up] Step 8/8: Run final checks and tests...
+NAME         IMAGE                                           COMMAND                  SERVICE      CREATED          STATUS                    PORTS
+dashboards   opensearchproject/opensearch-dashboards:3.6.0   "./opensearch-dashbo…"   dashboards   1 second ago     Up Less than a second     0.0.0.0:5601->5601/tcp, [::]:5601->5601/tcp
+os01         kosson/opensearch-icu:3.6.0                     "./opensearch-docker…"   os01         59 seconds ago   Up 57 seconds (healthy)   0.0.0.0:9200->9200/tcp, [::]:9200->9200/tcp, 9300/tcp, 0.0.0.0:9600->9600/tcp, [::]:9600->9600/tcp, 9650/tcp
+os02         kosson/opensearch-icu:3.6.0                     "./opensearch-docker…"   os02         59 seconds ago   Up 58 seconds             9200/tcp, 9300/tcp, 9600/tcp, 9650/tcp
+os03         kosson/opensearch-icu:3.6.0                     "./opensearch-docker…"   os03         59 seconds ago   Up 58 seconds             9200/tcp, 9300/tcp, 9600/tcp, 9650/tcp
+os04         kosson/opensearch-icu:3.6.0                     "./opensearch-docker…"   os04         59 seconds ago   Up 58 seconds             9200/tcp, 9300/tcp, 9600/tcp, 9650/tcp
+os05         kosson/opensearch-icu:3.6.0                     "./opensearch-docker…"   os05         59 seconds ago   Up 58 seconds             9200/tcp, 9300/tcp, 9600/tcp, 9650/tcp
+TAP version 14
+# OpenSearch os01 auth integration check
+
+ok 1 - Docker available
+ok 2 - OpenSearch .env exists
+ok 3 - os01 container exists
+ok 4 - OPENSEARCH_INITIAL_ADMIN_PASSWORD is set
+ok 5 - os01 auth succeeds with OPENSEARCH_INITIAL_ADMIN_PASSWORD
+
+1..5
+# Passed: 5  Failed: 0
+[raise-from-ground-up] SUCCESS: OpenSearch cluster raised from zero and validation tests passed.
+[raise-from-ground-up] Cluster status=green, nodes=5
+```
+
+In case anything breaks (maybe a message `[raise-from-ground-up] ERROR: Admin auth probe did not reach HTTP 200 within 180s (last HTTP 401).`), or hangs, just interrupt the running script (CTRL+c), and run it again.
+Procede only if you get a green cluster. If all ok, climb one directory to the root of the project (`cd ..`).
 
 #### Step 4: Build and start Koha stack
 
@@ -139,10 +170,38 @@ Use this when you are actively editing Koha code. The `./koha` directory from yo
 ```bash
 # Build the dev image (target: dev-runtime, ~5-10 min first time)
 ./stack-alpine.sh build --image-mode dev --build-koha
+```
 
+Now, edit `env/.env` and change the password for the `KOHA_DB_ROOT_PASSWORD=change_me_before_first_start` variable. The string `change_me_before_first_start` should be something different. Otherwise, at `./stack-alpine.sh start` runtime, it will end up with the following error: `✗  MariaDB did not become ready after 60 seconds. Check KOHA_DB_ROOT_PASSWORD in env/.env...`.
+
+> Important: `KOHA_DB_ROOT_PASSWORD` is tied to the named MariaDB volume `koha-db-data` when the database is first initialized. If you change the password after that volume already exists, MariaDB keeps accepting the old root password from the persisted volume. In that case, either restore the old password or delete the volume (and any existing data) with `./stack-alpine.sh reset` before starting again.
+
+If you already changed the password and the stack keeps saying MariaDB is running but rejecting the configured root password, the volume is stale. The fix is to remove the volume and recreate the database state before restarting:
+
+```bash
+cd /path/to/your/koha-alpine
+
+docker compose -f docker-compose-alpinekoha.yml down -v --remove-orphans
+docker volume rm koha-alpine_koha-db-data || true
+./stack-alpine.sh tls-client-cert
+./stack-alpine.sh start --image-mode dev
+```
+
+If MariaDB logs show `SSL error: Unable to get private key from '/etc/mysql/ssl/server-key.pem'`, the generated TLS key files are unreadable on the host side. Fix permissions before starting the stack:
+
+```bash
+chmod 644 files-alpine/mariadb-ssl/server-key.pem files-alpine/mariadb-ssl/client-key.pem
+./stack-alpine.sh tls-client-cert
+```
+
+```bash
 # Prepare MariaDB TLS client cert/key and auto-wire env/.env
 ./stack-alpine.sh tls-client-cert
+```
 
+Now, start the application running the following command:
+
+```bash
 # Start the full managed stack in dev mode
 ./stack-alpine.sh start --image-mode dev
 ```
@@ -460,158 +519,86 @@ compose project name derive from it automatically.
 
 ### Overview
 
-The Koha Alpine container uses **SSL/TLS encryption for all MariaDB database connections**. The certificates are pre-generated and included in the image at `/etc/mysql/ssl/`.
+The Koha Alpine stack uses **TLS for MariaDB**. The critical point is that the script must be able to bootstrap the certificate chain from zero when the repo does not already contain a valid CA or when a certificate has drifted or become unusable.
 
-**Certificate Chain:**
+The certificate set lives under `files-alpine/mariadb-ssl/` and contains:
 
-- **CA Certificate** (`ca-cert.pem`, `ca-key.pem`): Self-signed Certificate Authority
-- **Server Certificate** (`server-cert.pem`, `server-key.pem`): Database server certificate
-- **Client Certificate** (`client-cert.pem`, `client-key.pem`): Koha client certificate (used by Perl/DBI paths)
-- **Configuration** (`mariadb-ssl.cnf`): MySQL SSL configuration
-- **Extensions** (`server-ext.cnf`): Certificate subject alternative names
+- **CA Certificate**: `ca-cert.pem`, `ca-key.pem`
+- **Server Certificate**: `server-cert.pem`, `server-key.pem`
+- **Client Certificate**: `client-cert.pem`, `client-key.pem`
+- **MariaDB config**: `mariadb-ssl.cnf`
+- **OpenSSL extensions**: `server-ext.cnf`, `client-ext.cnf`
 
-You MUST regenerate them to avoid any security issues.
+The key rule is this: the helper must not assume a valid CA already exists in the repo. It must create a new CA and the server/client certs automatically if the files are missing, invalid, or stale.
 
 ### Recommended helper workflow (stack-managed)
 
-Use the integrated helper in `stack-alpine.sh` to keep TLS client material and `.env` in sync:
+Use the built-in helper as the single source of truth:
 
 ```bash
-# Generate or reuse client cert/key and update env/.env:
+# Create the full CA + server + client chain if missing or invalid
 ./stack-alpine.sh tls-client-cert
 
-# Force regeneration:
+# Force a full rebuild even if the certificates look present
 ./stack-alpine.sh tls-client-cert --force-client-tls-regen
 
-# Run helper automatically in normal operations:
+# Run automatically before the stack starts
 ./stack-alpine.sh start --prepare-db-client-tls
 ./stack-alpine.sh restart --prepare-db-client-tls
 ./stack-alpine.sh build --prepare-db-client-tls --build-koha
 ```
 
-What it does:
+What the helper does:
 
-1. Validates `files-alpine/mariadb-ssl/ca-cert.pem` and `ca-key.pem`.
-2. Generates `client-cert.pem` + `client-key.pem` signed by the local CA.
-3. Sets readable permissions required by Apache CGI/Perl DBI in bind-mounted paths.
-4. Updates `env/.env` keys:
-  - `KOHA_DB_TLS_CLIENT_CERTIFICATE=/etc/mysql/ssl/client-cert.pem`
-  - `KOHA_DB_TLS_CLIENT_KEY=/etc/mysql/ssl/client-key.pem`
+1. Verifies the CA certificate and key are valid, or creates a fresh local CA from scratch.
+2. Regenerates the MariaDB server certificate if it is missing or not signed by the CA.
+3. Regenerates the Koha client certificate if it is missing or not signed by the CA.
+4. Writes the TLS paths into `env/.env`:
+   - `KOHA_DB_TLS_CA_CERTIFICATE=/etc/mysql/ssl/ca-cert.pem`
+   - `KOHA_DB_TLS_CLIENT_CERTIFICATE=/etc/mysql/ssl/client-cert.pem`
+   - `KOHA_DB_TLS_CLIENT_KEY=/etc/mysql/ssl/client-key.pem`
 
-This avoids Koha source edits while keeping bootstrap and runtime DB connectivity stable.
+This makes the first-time setup and certificate recovery deterministic, even when you change `KOHA_DB_ROOT_PASSWORD` or a repo checkout starts without usable trust material.
 
-### Who Creates Certificates and When
+### When the helper regenerates certificates
 
-| Role | Task | Timing | How |
-|------|------|--------|-----|
-| **First-time Setup** (DevOps/Developer) | Generate root CA and server certificates | During initial project setup | See "Generating New Certificates" below |
-| **Image Builder** | Bake certificates into Alpine image | During Docker image build | `COPY files-alpine/mariadb-ssl /etc/mysql/ssl` in Dockerfile-Alpine |
-| **Runtime** | Mount SSL files into MariaDB container | At container startup | Via docker-compose volume mounts |
-| **Certificate Renewal** (DevOps) | Replace expired certificates | Every 10 years (default) or on expiration | Generate new certs, rebuild image |
+The script will recreate the certificate set if any of the following is true:
 
-### Certificate Locations
+- `ca-cert.pem` or `ca-key.pem` is missing
+- the CA certificate cannot be parsed with OpenSSL
+- the CA key cannot be read
+- the server or client certificate is missing
+- the server or client certificate is not signed by the local CA
+- `--force-client-tls-regen` was passed explicitly
+
+### Certificate locations
 
 ```log
 files-alpine/mariadb-ssl/
-├── ca-cert.pem              # Root CA public certificate
-├── ca-key.pem               # Root CA private key (keep private!)
-├── server-cert.pem          # Database server public certificate
-├── server-key.pem           # Database server private key (keep private!)
-├── client-cert.pem          # Koha DB client certificate (generated by helper)
-├── client-key.pem           # Koha DB client key (generated by helper)
-├── client-ext.cnf           # Client certificate extensions (generated by helper)
-├── server-ext.cnf           # Server certificate extensions (alt names)
-├── ca-cert.srl              # CA serial number tracking
-└── mariadb-ssl.cnf          # MySQL SSL configuration
+├── ca-cert.pem              # Local root CA certificate
+├── ca-key.pem               # Local root CA private key
+├── server-cert.pem          # MariaDB server certificate
+├── server-key.pem           # MariaDB server private key
+├── client-cert.pem          # Koha client certificate
+├── client-key.pem           # Koha client private key
+├── client-ext.cnf           # Client certificate extensions
+├── server-ext.cnf           # Server certificate extensions
+├── ca-cert.srl              # CA serial tracking
+├── mariadb-ssl.cnf          # MariaDB SSL configuration
+└── (generated on demand)    # No manual bootstrap required
 ```
 
-All files are:
+### Recovery / fresh-start example
 
-- ✅ Committed to git (self-signed, non-production safe)
-- ✅ Baked into Docker image during build
-- ✅ Mounted read-only into MariaDB container at `/etc/mysql/ssl`
-
-### Generating New Certificates
-
-**Use case:** Initial setup, certificate renewal, or custom hostname requirements.
-
-**Prerequisites:**
+If the stack stops because it cannot find or trust the MariaDB CA, the safe recovery path is:
 
 ```bash
-# Alpine/Linux: ensure openssl is installed
-apk add openssl
-
-# Debian/Ubuntu:
-sudo apt-get install openssl
-
-# macOS:
-brew install openssl
+cd /path/to/koha-alpine
+./stack-alpine.sh tls-client-cert
+./stack-alpine.sh restart --no-logs
 ```
 
-**Step 1: Create Certificate Authority (CA)**
-
-```bash
-cd files-alpine/mariadb-ssl
-
-# Generate CA private key (RSA 2048-bit)
-openssl genrsa -out ca-key.pem 2048
-
-# Generate CA public certificate (valid 10 years)
-openssl req -new -x509 -nodes -days 3650 -key ca-key.pem -out ca-cert.pem \
-  -subj "/CN=koha-mariadb-ca"
-
-# Initialize serial tracking
-echo "01" > ca-cert.srl
-```
-
-**Step 2: Create Server Certificate Request**
-
-```bash
-# Generate server private key
-openssl genrsa -out server-key.pem 2048
-
-# Create server certificate request
-openssl req -new \
-  -key server-key.pem \
-  -out server.csr \
-  -subj "/CN=db"
-```
-
-**Step 3: Create Server Certificate Extensions**
-
-Create `server-ext.cnf` with your hostnames:
-
-```ini
-subjectAltName=DNS:db,DNS:localhost,DNS:your-hostname.local,IP:127.0.0.1,IP:192.168.1.100
-extendedKeyUsage=serverAuth
-```
-
-**Step 4: Sign Server Certificate with CA**
-
-```bash
-openssl x509 -req -in server.csr \
-  -CA ca-cert.pem -CAkey ca-key.pem \
-  -CAserial ca-cert.srl \
-  -out server-cert.pem \
-  -days 3650 \
-  -extensions v3_ext -extfile server-ext.cnf
-
-# Clean up request file
-rm server.csr
-```
-
-**Step 5: Verify Certificates**
-
-```bash
-# Verify CA certificate
-openssl x509 -in ca-cert.pem -text -noout
-
-# Verify server certificate
-openssl x509 -in server-cert.pem -text -noout
-
-# Verify server certificate signed by CA
-openssl verify -CAfile ca-cert.pem server-cert.pem
-```
+This recreates the CA and signed server/client certificates in the project-local TLS directory instead of depending on a stale certificate bundle shipped from an earlier clone.
 
 ### Using Certificates in the Container
 
