@@ -111,7 +111,7 @@ This allows `docker stop` to complete within the grace period without SIGKILL.
 
 > "Verify background workers automatically restart if terminated, and scheduled cron jobs execute via Alpine `crond`."
 
-**Static test assertions** (`tests/test_phase5_supervision.sh` — 35 static checks):
+**Static test assertions** (`tests/test_phase5_supervision.sh` — 47 static checks):
 - OpenRC init scripts exist, have the correct shebang, and delegate to native commands.
 - Dockerfile installs OpenRC scripts and cron tasks.
 - Cron scripts guard on `KOHA_CONF` existence.
@@ -119,17 +119,19 @@ This allows `docker stop` to complete within the grace period without SIGKILL.
 - `run.sh` calls both functions and does not use the old blocking-loop pattern.
 - `run_service_watchdog` handles SIGTERM and monitors `koha-plack`/`koha-worker` status and restart.
 
-**Runtime smoke tests** (require running container — skipped without image):
+**Runtime checks** (require an explicitly selected running container — skipped without one):
 - `crond` process is active.
 - `/etc/periodic/` cron scripts are present.
 - `/etc/init.d/koha-plack` and `/etc/init.d/koha-worker` are installed.
-- `/ktd_ready` marker is present (container is alive and watchdog is running).
+- PID 1 is the Alpine `run.sh` watchdog, and watchdog startup is logged.
+- Plack socket/group permissions, healthcheck, least-capability allowlist, runtime path permissions, and root-only MySQL client credential files are verified.
 
 **Manual restart-recovery test**:
 ```bash
-# Kill the starman master process inside the container
-docker exec koha pkill starman
-# Wait one check interval (30 s)
+# Resolve the Starman master PID, then terminate only that process.
+plack_pid=$(docker exec koha sh -c 'ps -eo pid,args | awk "/[s]tarman master/ {print \\$1; exit}"')
+docker exec koha kill "$plack_pid"
+# Allow the watchdog poll and Plack startup to complete.
 sleep 35
 # Verify koha-plack has been restarted by the watchdog
 docker exec koha koha-plack --status kohadev
@@ -150,6 +152,6 @@ docker exec koha koha-plack --status kohadev
 - [x] 4.8 `run_service_watchdog()` in `run-sh-alpine.sh`
 - [x] 4.9 `run.sh` updated (crond start + watchdog replaces sleep loop)
 - [x] 4.10 `Dockerfile-Alpine` updated (OpenRC + cron install steps)
-- [x] 4.11 `tests/test_phase5_supervision.sh` — 35 static + 6 runtime checks
+- [x] 4.11 `tests/test_phase5_supervision.sh` — 47 static + 17 runtime checks
 - [x] 4.12 `tests/run_all_tests.sh` updated (Phase 5 suite added)
-- [ ] 4.13 Runtime verification: manual restart-recovery test on built image (pending image rebuild)
+- [x] 4.13 Runtime verification: Plack and default-worker watchdog recovery confirmed on the final Phase E dev image; selected-container Phase 5 checks pass 64/64 in dev and production.

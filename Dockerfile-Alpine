@@ -16,45 +16,73 @@ RUN set -eux; \
         echo "Koha source package.json missing from build context" >&2; \
         exit 1; \
     fi
+
+FROM docker.io/library/node:22-alpine AS prod-source
+ARG KOHA_GIT_URL=https://git.koha-community.org/Koha-community/Koha.git
+ARG KOHA_GIT_REF
+ARG KOHA_GIT_DEPTH=1
+RUN apk add --no-cache git \
+    && test -n "${KOHA_GIT_REF}" \
+    && test "${KOHA_GIT_DEPTH}" -gt 0 \
+    && case "${KOHA_GIT_REF}" in \
+        refs/heads/*|refs/remotes/*) echo "KOHA_GIT_REF must be a tag or commit, not a branch: ${KOHA_GIT_REF}" >&2; exit 1 ;; \
+        refs/tags/*) source_ref="${KOHA_GIT_REF}" ;; \
+        refs/*) echo "KOHA_GIT_REF must identify a tag or commit: ${KOHA_GIT_REF}" >&2; exit 1 ;; \
+        *) \
+            if printf '%s\n' "${KOHA_GIT_REF}" | grep -Eq '^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$'; then \
+                source_ref="${KOHA_GIT_REF}"; \
+            else \
+                source_ref="refs/tags/${KOHA_GIT_REF}"; \
+            fi ;; \
+    esac \
+    && mkdir -p /kohadevbox/koha \
+    && git -C /kohadevbox/koha init \
+    && git -C /kohadevbox/koha remote add origin "${KOHA_GIT_URL}" \
+    && git -C /kohadevbox/koha fetch --depth "${KOHA_GIT_DEPTH}" origin "${source_ref}" \
+    && git -C /kohadevbox/koha checkout --detach FETCH_HEAD \
+    && git -C /kohadevbox/koha rev-parse HEAD > /tmp/koha-source-revision \
+    && printf '%s\n' "${KOHA_GIT_URL}" > /tmp/koha-source-url \
+    && printf '%s\n' "${KOHA_GIT_REF}" > /tmp/koha-source-ref
+WORKDIR /kohadevbox/koha
+RUN CYPRESS_INSTALL_BINARY=0 yarn install --frozen-lockfile \
+    && yarn build \
+    && rm -rf node_modules .git /root/.cache/Cypress /root/.cache/yarn /usr/local/share/.cache/yarn
+
 FROM docker.io/library/alpine:${ALPINE_VERSION} AS base
 RUN addgroup -g 1000 kohadev && adduser -D -u 1000 -G kohadev -h /var/lib/koha/kohadev -s /bin/sh kohadev && addgroup -g 1001 kohadev-koha 2>/dev/null || addgroup kohadev-koha; adduser kohadev kohadev-koha 2>/dev/null || true
-RUN apk add --no-cache perl perl-cgi perl-cgi-session perl-dbd-mysql perl-dbi apache2 apache2-utils apache2-proxy openrc busybox-extras mariadb-client mariadb-dev openssl ca-certificates curl wget tzdata musl-locales musl-locales-lang sudo bash gettext envsubst pwgen findutils perl-app-cpanminus perl-local-lib perl-yaml libxml2 libxslt icu icu-data-full fribidi libpng freetype libjpeg-turbo libwebp gd nodejs npm yarn
-RUN apk add --no-cache --virtual .yaz-build-deps build-base libxslt-dev libxml2-dev openssl-dev zlib-dev icu-dev readline-dev libedit-dev && wget -q https://ftp.indexdata.com/pub/yaz/yaz-5.34.0.tar.gz -O /tmp/yaz.tar.gz && tar xzf /tmp/yaz.tar.gz -C /tmp && cd /tmp/yaz-5.34.0 && ./configure --prefix=/usr >/dev/null && make -j$(nproc) >/dev/null && make install >/dev/null && cd / && rm -rf /tmp/yaz* && apk del .yaz-build-deps && apk add --no-cache libxslt libxml2 openssl icu readline libedit
+RUN apk add --no-cache perl perl-cgi perl-cgi-session perl-dbd-mysql perl-dbi apache2 apache2-utils apache2-proxy openrc busybox-extras mariadb-client openssl ca-certificates curl tzdata musl-locales musl-locales-lang sudo bash gettext envsubst pwgen findutils perl-yaml libxml2 libxslt icu icu-data-full fribidi libpng freetype libjpeg-turbo libwebp gd
+RUN apk add --no-cache --virtual .yaz-build-deps build-base wget libxslt-dev libxml2-dev openssl-dev zlib-dev icu-dev readline-dev libedit-dev && wget -q https://ftp.indexdata.com/pub/yaz/yaz-5.34.0.tar.gz -O /tmp/yaz.tar.gz && tar xzf /tmp/yaz.tar.gz -C /tmp && cd /tmp/yaz-5.34.0 && ./configure --prefix=/usr >/dev/null && make -j$(nproc) >/dev/null && make install >/dev/null && cd / && rm -rf /tmp/yaz* && apk del .yaz-build-deps && apk add --no-cache libxslt libxml2 openssl icu readline libedit
 FROM base AS builder
-RUN apk add --no-cache --virtual .build-deps build-base perl-dev linux-headers openssl-dev zlib-dev expat-dev mariadb-dev libxml2-dev libxslt-dev icu-dev fribidi-dev gd-dev libpng-dev freetype-dev libjpeg-turbo-dev libwebp-dev libzip-dev yaml-dev git curl
+RUN apk add --no-cache perl-app-cpanminus perl-local-lib mariadb-dev git \
+    && apk add --no-cache --virtual .build-deps build-base perl-dev linux-headers openssl-dev zlib-dev expat-dev libxml2-dev libxslt-dev icu-dev fribidi-dev gd-dev libpng-dev freetype-dev libjpeg-turbo-dev libwebp-dev libzip-dev yaml-dev curl
 RUN curl -L https://cpanmin.us | perl - --self-upgrade
 RUN cpanm --notest --local-lib=/opt/koha-perl Crypt::SysRandom
 RUN cpanm --notest --local-lib=/opt/koha-perl Modern::Perl Log::Log4perl Plack Starman Starlet CGI CGI::Session CGI::Compile CGI::Emulate::PSGI DBI DBD::SQLite Mojolicious
+COPY scripts/install-koha-perl-dependencies.sh /usr/local/bin/install-koha-perl-dependencies.sh
 FROM builder AS koha-deps
 COPY koha/cpanfile koha/cpanfile.* /tmp/koha-deps/
 COPY koha/ /kohadevbox/koha/
 WORKDIR /kohadevbox/koha
-RUN set -eux; \
-    cpanm --notest --local-lib=/opt/koha-perl --installdeps .; \
-    cpanm --notest --local-lib=/opt/koha-perl \
-        Mojolicious::Plugin::OpenAPI Mojolicious::Plugin::OAuth2 Mojolicious::Plugin::OAuth2::Server \
-        Mojolicious::Plugin::AssetPack Mojo::JWT Net::OAuth2::AuthorizationServer Crypt::JWT Struct::Diff \
-        PDF::API2 PDF::Reuse GD::Barcode::QRcode Barcode::Code128 Net::Z3950::ZOOM \
-        MARC::Record MARC::File::XML MARC::Charset Search::Elasticsearch CHI CHI::Driver::Memcached \
-        Cache::Memcached::Fast Gravatar::URL Locale::PO Business::ISBN Business::ISMN Business::ISSN \
-        Algorithm::CheckDigits Authen::CAS::Client Crypt::Eksblowfish Crypt::OpenSSL::RSA Crypt::OpenSSL::Random \
-        Email::Stuffer Email::Valid Email::MIME Email::Sender Email::Address::XS Template::Plugin::JSON::Escape \
-        HTML::Template::Pro HTML::Scrubber DateTime::Format::MySQL DateTime::Format::ISO8601 \
-        DateTime::Format::DateParse DateTime::Format::Mail DateTime::Format::W3CDTF \
-        Plack::Middleware::ReverseProxy WWW::CSRF HTTP::OAI HTTP::BrowserDetect Net::Stomp OAuth::Lite \
-        String::Random Number::Phone Sereal Data::Pagination File::MimeInfo::Magic XML::Writer
+RUN sh /usr/local/bin/install-koha-perl-dependencies.sh /kohadevbox/koha
+
+FROM builder AS prod-deps
+COPY --from=prod-source /kohadevbox/koha /kohadevbox/koha
+WORKDIR /kohadevbox/koha
+RUN sh /usr/local/bin/install-koha-perl-dependencies.sh /kohadevbox/koha
+
 FROM base AS runtime-base
-COPY --from=koha-deps /opt/koha-perl /opt/koha-perl
-COPY files-alpine/ /build/files-alpine/
+RUN apk add --no-cache xmlstarlet \
+    && addgroup apache kohadev-koha
+COPY files-alpine/run.sh /usr/local/bin/run.sh
+COPY files-alpine/lib/run-sh-alpine.sh /build/files-alpine/lib/run-sh-alpine.sh
+COPY files-alpine/templates/koha-vhost.conf.in /build/files-alpine/templates/koha-vhost.conf.in
 COPY files-alpine/openrc/koha-plack /etc/init.d/koha-plack
 COPY files-alpine/openrc/koha-worker /etc/init.d/koha-worker
 COPY files-alpine/openrc/apache2 /etc/init.d/apache2
 COPY files-alpine/cron/koha-hourly /etc/periodic/hourly/koha-hourly
 COPY files-alpine/cron/koha-daily /etc/periodic/daily/koha-daily
 COPY files-alpine/cron/koha-monthly /etc/periodic/monthly/koha-monthly
-COPY scripts/build-alpine-package.sh /usr/local/bin/build-alpine-package.sh
-COPY --from=koha-deps /kohadevbox/koha/debian/templates/ /etc/koha/
-RUN set -eux; mkdir -p /usr/sbin /usr/local/bin /usr/share/koha/bin /kohadevbox/lib /etc/koha /kohadevbox/templates /var/log/koha /var/run/koha /var/lib/koha /etc/koha/sites /etc/koha/log4perl /var/lock/koha/kohadev /etc/mysql/ssl; chmod 0755 /usr/local/bin/build-alpine-package.sh; cp /build/files-alpine/run.sh /usr/local/bin/run.sh; chmod +x /usr/local/bin/run.sh; chown -R kohadev:kohadev /kohadevbox /opt/koha-perl /var/log/koha /var/run/koha /var/lib/koha /var/lock/koha /etc/koha; ln -sf /usr/local/bin/run.sh /kohadevbox/run.sh
+RUN set -eux; mkdir -p /usr/sbin /usr/local/bin /usr/share/koha/bin /kohadevbox/lib /etc/koha /kohadevbox/templates /opt/koha-perl /var/log/koha /var/run/koha /var/lib/koha /etc/koha/sites /etc/koha/log4perl /var/lock/koha/kohadev /etc/mysql/ssl; chmod 0755 /usr/local/bin/run.sh; chown -R kohadev:kohadev /kohadevbox /opt/koha-perl /var/log/koha /var/run/koha /var/lib/koha /var/lock/koha /etc/koha; ln -sf /usr/local/bin/run.sh /kohadevbox/run.sh
 RUN set -eux; \
     mkdir -p /etc/crontabs /etc/periodic/hourly /etc/periodic/daily /etc/periodic/monthly; \
     touch /etc/crontabs/root; \
@@ -65,40 +93,34 @@ RUN set -eux; \
         /etc/periodic/hourly/koha-hourly /etc/periodic/daily/koha-daily /etc/periodic/monthly/koha-monthly
 
 FROM runtime-base AS koha-base
+COPY --from=koha-deps /opt/koha-perl /opt/koha-perl
 COPY --from=koha-deps /kohadevbox/koha /kohadevbox/koha
+COPY --from=koha-deps /kohadevbox/koha/debian/templates/ /etc/koha/
 COPY --from=node-builder /opt/koha-tmpl-built /opt/koha-tmpl-built
-RUN set -eux; \
+RUN --mount=type=bind,source=files-alpine,target=/tmp/files-alpine,ro \
+    --mount=type=bind,source=scripts,target=/tmp/build-scripts,ro \
+    set -eux; \
     if [ -d /opt/koha-tmpl-built/koha-tmpl ]; then cp -r /opt/koha-tmpl-built/koha-tmpl /kohadevbox/koha/; fi; \
     test -f /kohadevbox/koha/debian/koha-common.install; \
-    PERL5LIB=/opt/koha-perl/lib/perl5 perl /usr/local/bin/build-alpine-package.sh /kohadevbox/koha; \
+    PERL5LIB=/opt/koha-perl/lib/perl5 perl /tmp/build-scripts/build-alpine-package.sh /kohadevbox/koha; \
     for script in koha-create koha-plack koha-worker koha-functions.sh; do \
-        test -f "/build/files-alpine/scripts/${script}"; \
-        install -m 0755 "/build/files-alpine/scripts/${script}" "/usr/sbin/${script}"; \
+        test -f "/tmp/files-alpine/scripts/${script}"; \
+        install -m 0755 "/tmp/files-alpine/scripts/${script}" "/usr/sbin/${script}"; \
     done; \
-    chown -R kohadev:kohadev /kohadevbox/koha /opt/koha-tmpl-built
+    chown -R kohadev:kohadev /kohadevbox/koha /opt/koha-perl /opt/koha-tmpl-built
 FROM koha-base AS dev-runtime
+RUN apk add --no-cache nodejs npm yarn git
 COPY --from=node-builder /usr/local/bin/node /usr/local/bin/node
+COPY files-alpine/scripts/ /build/files-alpine/scripts/
+COPY files-alpine/templates/ /build/files-alpine/templates/
+COPY files-alpine/git_hooks/ /build/files-alpine/git_hooks/
+COPY files-alpine/lib/ /build/files-alpine/lib/
+COPY scripts/build-alpine-package.sh /usr/local/bin/build-alpine-package.sh
+RUN chmod 0755 /usr/local/bin/build-alpine-package.sh
 WORKDIR /kohadevbox
 EXPOSE 5000 6001 8080 8081
 ENV PERL5LIB=/opt/koha-perl/lib/perl5:/kohadevbox/koha:/kohadevbox/koha/lib PATH=/opt/koha-perl/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin KOHADEVBOX=/kohadevbox/koha KOHA_HOME=/var/lib/koha/kohadev KOHASITE=kohadev
 ENTRYPOINT ["/usr/local/bin/run.sh"]
-
-FROM docker.io/library/node:22-alpine AS prod-source
-ARG KOHA_GIT_URL=https://git.koha-community.org/Koha-community/Koha.git
-ARG KOHA_GIT_REF
-ARG KOHA_GIT_DEPTH=1
-RUN apk add --no-cache git \
-    && test -n "${KOHA_GIT_REF}" \
-    && test "${KOHA_GIT_DEPTH}" -gt 0 \
-    && mkdir -p /kohadevbox/koha \
-    && git -C /kohadevbox/koha init \
-    && git -C /kohadevbox/koha remote add origin "${KOHA_GIT_URL}" \
-    && git -C /kohadevbox/koha fetch --depth "${KOHA_GIT_DEPTH}" origin "${KOHA_GIT_REF}" \
-    && git -C /kohadevbox/koha checkout --detach FETCH_HEAD
-WORKDIR /kohadevbox/koha
-RUN CYPRESS_INSTALL_BINARY=0 yarn install --frozen-lockfile \
-    && yarn build \
-    && rm -rf node_modules .git /root/.cache/Cypress /root/.cache/yarn /usr/local/share/.cache/yarn
 
 FROM runtime-base AS prod-runtime
 ARG KOHA_GIT_URL=https://git.koha-community.org/Koha-community/Koha.git
@@ -106,22 +128,29 @@ ARG KOHA_GIT_REF
 ARG KOHA_VERSION=unknown
 LABEL org.opencontainers.image.title="koha-alpine-prod" \
       org.opencontainers.image.version="${KOHA_VERSION}" \
-      org.opencontainers.image.source="${KOHA_GIT_URL}"
+      org.opencontainers.image.source="${KOHA_GIT_URL}" \
+      org.opencontainers.image.revision="${KOHA_GIT_REF}"
+COPY --from=prod-deps /opt/koha-perl /opt/koha-perl
 COPY --from=prod-source /kohadevbox/koha /kohadevbox/koha
 COPY --from=prod-source /kohadevbox/koha/debian/templates/ /etc/koha/
-RUN set -eux; \
+COPY --from=prod-source /tmp/koha-source-revision /usr/share/koha/source-revision
+COPY --from=prod-source /tmp/koha-source-url /usr/share/koha/source-url
+COPY --from=prod-source /tmp/koha-source-ref /usr/share/koha/source-ref
+RUN --mount=type=bind,source=files-alpine,target=/tmp/files-alpine,ro \
+    --mount=type=bind,source=scripts,target=/tmp/build-scripts,ro \
+    set -eux; \
     test -n "${KOHA_GIT_REF}"; \
     test -f /kohadevbox/koha/debian/koha-common.install; \
-    PERL5LIB=/opt/koha-perl/lib/perl5 perl /usr/local/bin/build-alpine-package.sh /kohadevbox/koha; \
+    PERL5LIB=/opt/koha-perl/lib/perl5 perl /tmp/build-scripts/build-alpine-package.sh /kohadevbox/koha; \
     for script in koha-create koha-plack koha-worker koha-functions.sh; do \
-        test -f "/build/files-alpine/scripts/${script}"; \
-        install -m 0755 "/build/files-alpine/scripts/${script}" "/usr/sbin/${script}"; \
+        test -f "/tmp/files-alpine/scripts/${script}"; \
+        install -m 0755 "/tmp/files-alpine/scripts/${script}" "/usr/sbin/${script}"; \
     done; \
-    chown -R kohadev:kohadev /kohadevbox/koha /etc/koha /usr/share/koha
+    chown -R kohadev:kohadev /kohadevbox/koha /opt/koha-perl /etc/koha /usr/share/koha
 WORKDIR /kohadevbox
 EXPOSE 6001 8080 8081
 ENV PERL5LIB=/opt/koha-perl/lib/perl5:/kohadevbox/koha:/kohadevbox/koha/lib \
-    PATH=/opt/koha-perl/bin:/usr/local/bin:/usr/bin:/bin \
+    PATH=/opt/koha-perl/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin \
     KOHADEVBOX=/kohadevbox/koha \
     KOHA_HOME=/var/lib/koha/kohadev \
     KOHASITE=kohadev \

@@ -39,7 +39,8 @@ Single repository, single Dockerfile, two explicit targets.
 
 2. Target B: prod image
 - Bakes a pinned Koha release into image layers.
-- Removes development-only runtime dependencies.
+- Does not mount the development checkout and omits the Git and Perl build toolchains from the final image.
+- Shares part of the current runtime package base with dev; removal of remaining unused runtime packages is a later image-reduction task.
 - Uses production-safe defaults and reduced startup mutation.
 
 ```mermaid
@@ -56,30 +57,27 @@ flowchart LR
 
 ## 4) Multistage Dockerfile design
 
-Transform Dockerfile-Alpine into multistage with named targets.
+`Dockerfile-Alpine` now contains named development and production stages:
 
-Suggested stages:
+1. `base` / `runtime-base`
+- Alpine runtime packages and shared Koha service wiring.
+- Phase E removes frontend, VCS, Perl build, and MariaDB development packages from the final runtime; later work should keep reductions evidence-driven and preserve runtime command availability.
 
-1. base-runtime
-- Alpine OS + core runtime packages + required Perl modules.
-- Common foundation for both dev and prod targets.
+2. `node-builder`
+- Builds the checked-out Koha assets for the development image.
 
-2. koha-fetch
-- Clone Koha using build args (version tag/commit/branch).
-- Resolve exact ref and record metadata labels.
+3. `prod-source`
+- Fetches a required tag or commit from `KOHA_GIT_URL`, rejects branch refs, builds assets, and records the requested ref, source URL, and resolved commit.
+- Removes `.git`, `node_modules`, and build caches before the source is copied into the final image.
 
-3. koha-build-assets
-- Run yarn/npm asset build once during image build.
-- Produce static assets as immutable artifacts.
+4. `koha-deps` / `prod-deps`
+- Install Koha Perl dependencies with a shared installer.
+- `koha-deps` uses the development checkout; `prod-deps` uses the source from `prod-source`, so production code and Perl dependencies cannot drift across revisions.
 
-4. dev-tools
-- Add misc4dev, gitify (if still needed during transition), qa-test-tools, debug conveniences.
-- Keep run.sh dev behavior and source mount compatibility.
-
-5. prod-runtime
-- Copy only required runtime artifacts from prior stages.
-- Exclude development helpers and unnecessary build tools.
-- Keep only what is required to start and run the fixed Koha instance.
+5. `koha-base` / `dev-runtime` and `prod-runtime`
+- `koha-base` stages dev source/assets; `prod-runtime` stages the fetched release, its Perl library, and manifest-selected runtime assets.
+- Both apply Alpine command overrides after upstream asset staging.
+- Production Compose replaces the dev volume list so the source checkout is not mounted at runtime.
 
 ## 5) Fixed version pinning model
 
@@ -88,7 +86,7 @@ Production image must be tied to an immutable source identifier.
 Recommended build args:
 
 - KOHA_VERSION (human-readable release marker, for example 26.11.00)
-- KOHA_GIT_REF (tag or commit SHA)
+- KOHA_GIT_REF (required tag or commit SHA; floating branch names are rejected)
 - KOHA_GIT_URL (optional override, default upstream)
 
 Recommended OCI labels:
@@ -97,6 +95,8 @@ Recommended OCI labels:
 - org.opencontainers.image.revision
 - org.opencontainers.image.source
 - org.opencontainers.image.created
+
+The production image also stores the resolved source commit in `/usr/share/koha/source-revision`, with the requested ref and source URL in adjacent metadata files. Its OCI revision label currently records the supplied source ref; consumers needing the exact commit should use the resolved-revision file.
 
 Policy:
 

@@ -79,6 +79,8 @@ assert_contains "vhost template uses KOHA_LIB_PATH" '${KOHA_LIB_PATH}' "${VHOST_
 assert_contains "vhost template includes ExecCGI" "ExecCGI" "${VHOST_TMPL}"
 assert_contains "vhost template has intranet VirtualHost" "KOHA_INTRANET_PORT" "${VHOST_TMPL}"
 assert_contains "vhost template has OPAC VirtualHost" "KOHA_OPAC_PORT" "${VHOST_TMPL}"
+assert_contains "vhost rewrites REST API requests to the Plack app path" 'RewriteRule ^/api/(v[0-9]+)/(.*)$ /api/$1/app.pl/api/$1/$2 [L,PT]' "${VHOST_TMPL}"
+assert_contains "vhost avoids rewriting requests already targeting the API app" 'RewriteCond %{REQUEST_URI} !^/api/v[0-1]+/app.pl' "${VHOST_TMPL}"
 
 # --- koha-conf-site.xml.in: no hardcoded /usr/share/koha ---
 assert_not_contains "koha-conf-site.xml.in has no hardcoded /usr/share/koha" "/usr/share/koha" "${KOHA_CONF_TMPL}"

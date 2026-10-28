@@ -11,11 +11,17 @@ DB_PASS=${KOHA_DB_PASSWORD:-${MYSQL_PASS:-password}}
 DB_NAME=koha_${KOHASITE}
 MEMCACHED_SERVERS=${MEMCACHED_SERVERS:-memcached:11211}
 MESSAGE_BROKER_HOST=${MESSAGE_BROKER_HOST:-rabbitmq}
+MESSAGE_BROKER_USER=${MESSAGE_BROKER_USER:-guest}
+MESSAGE_BROKER_PASS=${MESSAGE_BROKER_PASS:-guest}
+MESSAGE_BROKER_VHOST=${MESSAGE_BROKER_VHOST:-koha_${KOHASITE}}
 ADMIN_USER=${KOHA_ADMIN_USER:-admin}
 ADMIN_PASS=${KOHA_ADMIN_PASS:-admin123}
 ADMIN_BRANCH=${KOHA_ADMIN_BRANCH:-CPL}
 ADMIN_CATEGORY=${KOHA_ADMIN_CATEGORY:-S}
 export KOHA_CONF=${KOHACONF} KOHA_HOME=${KOHA_HOME} PERL5LIB=/opt/koha-perl/lib/perl5:${KOHADEVBOX}/lib:${KOHADEVBOX}:/opt/koha-perl/lib/perl5 MYSQL_PWD=${DB_PASS}
+export BUILD_DIR=/build/files-alpine
+. "${BUILD_DIR}/lib/run-sh-alpine.sh"
+write_db_client_configs "${KOHASITE}"
 
 echo "[run.sh] BEEFY v25 TRAEFIK-FIX - $KOHASITE"
 
@@ -81,6 +87,9 @@ mkdir -p /etc/koha/sites/${KOHASITE} /var/log/koha/${KOHASITE} /var/run/koha/${K
 [ -f /etc/koha/koha-conf-site.xml.in ] || cp ${KOHADEVBOX}/debian/templates/* /etc/koha/ 2>/dev/null || true
 TEMPLATE="/etc/koha/koha-conf-site.xml.in"; [ -f "$TEMPLATE" ] || TEMPLATE="${KOHADEVBOX}/debian/templates/koha-conf-site.xml.in"
 DB_PASS_ESC=$(printf '%s' "$DB_PASS" | sed 's/[&/\]/\\&/g')
+MESSAGE_BROKER_USER_ESC=$(printf '%s' "$MESSAGE_BROKER_USER" | sed 's/[\\&|]/\\&/g')
+MESSAGE_BROKER_PASS_ESC=$(printf '%s' "$MESSAGE_BROKER_PASS" | sed 's/[\\&|]/\\&/g')
+MESSAGE_BROKER_VHOST_ESC=$(printf '%s' "$MESSAGE_BROKER_VHOST" | sed 's/[\\&|]/\\&/g')
 cp "$TEMPLATE" "${KOHACONF}.tmp"
 sed -i \
     -e "s|__KOHASITE__|$KOHASITE|g" \
@@ -109,9 +118,9 @@ sed -i \
     -e "s|__LOG_DIR__|/var/log/koha/$KOHASITE|g" \
     -e "s|__MESSAGE_BROKER_HOST__|$MESSAGE_BROKER_HOST|g" \
     -e "s|__MESSAGE_BROKER_PORT__|61613|g" \
-    -e "s|__MESSAGE_BROKER_USER__|guest|g" \
-    -e "s|__MESSAGE_BROKER_PASS__|guest|g" \
-    -e "s|__MESSAGE_BROKER_VHOST__|koha_$KOHASITE|g" \
+    -e "s|__MESSAGE_BROKER_USER__|$MESSAGE_BROKER_USER_ESC|g" \
+    -e "s|__MESSAGE_BROKER_PASS__|$MESSAGE_BROKER_PASS_ESC|g" \
+    -e "s|__MESSAGE_BROKER_VHOST__|$MESSAGE_BROKER_VHOST_ESC|g" \
     "${KOHACONF}.tmp"
 ZEBRA_PWD=$(head -c 16 /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c16); API_SECRET=$(head -c 32 /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c32)
 sed -i \
@@ -145,9 +154,15 @@ if [ "$DB_IS_READY" -eq 0 ]; then
     exit 1
 fi
 
-# Check if the database is empty by looking for the systempreferences table.
-# If it's empty, initialize the schema and load mandatory data.
-if ! mysql -h ${DB_HOST} -u ${DB_USER} ${DB_NAME} -e "SELECT 1 FROM systempreferences LIMIT 1" >/dev/null 2>&1; then
+# Check whether the Koha schema table exists. A query error is not treated as an
+# empty database: only a successful metadata query reporting no table bootstraps.
+if ! SYSTEMPREFERENCES_TABLE=$(mysql -h "${DB_HOST}" -u "${DB_USER}" -Nse \
+    "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${DB_NAME}' AND table_name='systempreferences'"); then
+    echo "[run.sh] ERROR: unable to inspect the Koha schema state in ${DB_NAME}" >&2
+    exit 1
+fi
+
+if [ "${SYSTEMPREFERENCES_TABLE}" = "0" ]; then
     echo "[run.sh] Database appears to be empty. Initializing schema..."
     mysql -h ${DB_HOST} -u ${DB_USER} ${DB_NAME} < "${KOHADEVBOX}/installer/data/mysql/kohastructure.sql"
     echo "[run.sh] Loading mandatory data..."
@@ -165,7 +180,11 @@ mysql -h ${DB_HOST} -u ${DB_USER} ${DB_NAME} -e "INSERT IGNORE INTO branches (br
 # previous run/experiment can have cardnumber '1' taken by a differently-named
 # user, which would otherwise crash create_superlibrarian.pl under `set -e` and
 # take down the whole container (observed: "Field 'cardnumber' must be unique").
-ADMIN_EXISTS=$(mysql -h ${DB_HOST} -u ${DB_USER} ${DB_NAME} -Nse "SELECT 1 FROM borrowers WHERE userid='$ADMIN_USER' OR cardnumber='1' LIMIT 1" 2>/dev/null || true)
+if ! ADMIN_EXISTS=$(mysql -h "${DB_HOST}" -u "${DB_USER}" "${DB_NAME}" -Nse \
+    "SELECT 1 FROM borrowers WHERE userid='${ADMIN_USER}' OR cardnumber='1' LIMIT 1"); then
+  echo "[run.sh] ERROR: unable to verify whether the initial admin account exists" >&2
+  exit 1
+fi
 if [ -z "$ADMIN_EXISTS" ]; then
   echo "[run.sh] Creating $ADMIN_USER"
   if ! su kohadev-koha -s /bin/sh -c "export KOHA_CONF=${KOHACONF} PERL5LIB=/opt/koha-perl/lib/perl5:${KOHADEVBOX}/lib:${KOHADEVBOX} KOHA_HOME=${KOHA_HOME}; cd ${KOHADEVBOX}; perl misc/devel/create_superlibrarian.pl --userid $ADMIN_USER --password $ADMIN_PASS --branchcode $ADMIN_BRANCH --categorycode $ADMIN_CATEGORY --cardnumber 1 --surname Admin"; then
@@ -187,11 +206,8 @@ echo "[run.sh] updatedatabase"; su kohadev-koha -s /bin/sh -c "export KOHA_CONF=
 # compose/Traefik) with mod_cgi as the always-working baseline, and try to
 # layer real Plack (koha-plack -> debian's CGI-based plack.psgi over a unix
 # socket, proxied by Apache) on top via the restored run-sh-alpine.sh helpers.
-. /build/files-alpine/lib/run-sh-alpine.sh
-
 # render_vhost() (from run-sh-alpine.sh) reads ${BUILD_DIR}/templates/koha-vhost.conf.in.
 # Templates are bind-mounted (dev) / COPY'd (image) to /build/files-alpine/templates.
-export BUILD_DIR=/build/files-alpine
 export KOHA_INSTANCE=${KOHASITE}
 export KOHA_PATH=${KOHADEVBOX}
 export KOHA_LIB_PATH=${KOHADEVBOX}/lib
@@ -201,9 +217,8 @@ export KOHA_INTRANET_FQDN=${KOHA_INTRANET_PREFIX}${KOHASITE}${KOHA_INTRANET_SUFF
 export KOHA_OPAC_FQDN=${KOHA_OPAC_PREFIX}${KOHASITE}${KOHA_OPAC_SUFFIX}${KOHA_DOMAIN}
 VARS_TO_SUB='$KOHA_INTRANET_PORT:$KOHA_INTRANET_FQDN:$KOHA_OPAC_PORT:$KOHA_OPAC_FQDN:$KOHA_PATH:$KOHA_LIB_PATH:$KOHA_INSTANCE'
 
-# Install the Alpine-native koha-plack/koha-worker/koha-create scripts. These
-# are not baked into /usr/sbin by the Dockerfile (only files-alpine/run.sh is);
-# install them here so enable_instance_services/start_koha_service can find them.
+# Reapply development-mounted Alpine command overrides when present; both image
+# targets already install their wrappers during the build.
 for _script in koha-create koha-plack koha-worker koha-functions.sh; do
     if [ -f "${BUILD_DIR}/scripts/${_script}" ]; then
         install -m 0755 "${BUILD_DIR}/scripts/${_script}" "/usr/sbin/${_script}"
@@ -249,16 +264,28 @@ mkdir -p /etc/apache2/sites-available /etc/apache2/sites-enabled
 render_vhost "${KOHASITE}"
 ln -sf "/etc/apache2/sites-available/${KOHASITE}.conf" "/etc/apache2/sites-enabled/${KOHASITE}.conf"
 
-chmod 644 "${KOHACONF}" 2>/dev/null || true
-chmod 666 /var/log/koha/${KOHASITE}/*.log 2>/dev/null || true
-
-# Alpine's Apache runs CGI as the 'apache' user (no AssignUserID/suexec support),
-# unlike Debian where CGI runs as '<instance>-koha'. Without this, Template
-# Toolkit's cache mkdir (and log4perl appenders) fail with "Permission denied"
-# for every CGI request, producing 500s even though Apache itself is healthy.
-chmod -R 777 /var/cache/koha/${KOHASITE} 2>/dev/null || true
-chmod -R 777 /var/log/koha/${KOHASITE} 2>/dev/null || true
-chmod -R 777 /var/run/koha/${KOHASITE} 2>/dev/null || true
+umask 0007
+chgrp -R kohadev-koha \
+    "/etc/koha/sites/${KOHASITE}" \
+    "/var/cache/koha/${KOHASITE}" \
+    "/var/log/koha/${KOHASITE}" \
+    "/var/run/koha/${KOHASITE}" \
+    "${KOHA_HOME}/uploads" \
+    "${KOHA_HOME}/tmp"
+chmod -R g+rX,o-rwx "/etc/koha/sites/${KOHASITE}"
+chmod -R g+rwX,o-rwx \
+    "/var/cache/koha/${KOHASITE}" \
+    "/var/log/koha/${KOHASITE}" \
+    "${KOHA_HOME}/uploads" \
+    "${KOHA_HOME}/tmp"
+chmod 0750 "/etc/koha/sites/${KOHASITE}"
+chmod 2770 \
+    "/var/cache/koha/${KOHASITE}" \
+    "/var/log/koha/${KOHASITE}" \
+    "${KOHA_HOME}/uploads" \
+    "${KOHA_HOME}/tmp"
+chmod 0750 "/var/run/koha/${KOHASITE}"
+chmod 0640 "${KOHACONF}"
 
 stop_apache_service
 

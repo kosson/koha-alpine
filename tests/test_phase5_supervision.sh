@@ -95,9 +95,36 @@ check "Dockerfile copies koha-daily cron script" \
     grep -q 'files-alpine/cron/koha-daily' Dockerfile-Alpine
 check "Dockerfile copies koha-monthly cron script" \
     grep -q 'files-alpine/cron/koha-monthly' Dockerfile-Alpine
+if grep -q 'COPY files-alpine/ /build/files-alpine/' Dockerfile-Alpine; then
+    not_ok "runtime image does not copy the full development helper tree"
+else
+    ok "runtime image does not copy the full development helper tree"
+fi
 
 check "Dockerfile ensures run-parts entries in /etc/crontabs/root" \
     grep -q 'run-parts' Dockerfile-Alpine
+check "runtime installs xmlstarlet for koha-shell instance config detection" \
+    grep -q 'apk add --no-cache xmlstarlet' Dockerfile-Alpine
+check "runtime adds Apache to the Koha shared group" \
+    grep -q 'addgroup apache kohadev-koha' Dockerfile-Alpine
+check "Plack uses a restrictive umask for shared runtime files" \
+    grep -q 'umask 0007' files-alpine/scripts/koha-plack
+check "Plack socket permissions are group-scoped, not world-writable" \
+    grep -q 'chmod 0660 "$SOCKET"' files-alpine/scripts/koha-plack
+check "required Plack startup failures are reported" \
+    grep -q 'ERROR: koha-plack failed to start' files-alpine/lib/run-sh-alpine.sh
+check "required worker startup failures are reported" \
+    grep -q 'ERROR: koha-worker failed to start' files-alpine/lib/run-sh-alpine.sh
+check "required Apache startup failures are reported" \
+    grep -q 'ERROR: httpd failed to start' files-alpine/lib/run-sh-alpine.sh
+check "required crond startup failures are reported" \
+    grep -q 'ERROR: failed to start crond' files-alpine/lib/run-sh-alpine.sh
+check "failed watchdog restart attempts are reported" \
+    grep -q 'ERROR: koha-worker restart attempt failed' files-alpine/lib/run-sh-alpine.sh
+check "MySQL credential files are restricted to root" \
+    grep -q 'chmod 0600 /etc/mysql/koha-common.cnf /etc/mysql/debian.cnf' files-alpine/lib/run-sh-alpine.sh
+check "MySQL instance credential file uses configured host and password" \
+    grep -qF '"${DB_HOST}" "${DB_USER}" "${DB_PASS}"' files-alpine/lib/run-sh-alpine.sh
 
 # ─── Static: Cron scripts ─────────────────────────────────────────────────────
 echo ""
@@ -152,8 +179,10 @@ check "run_service_watchdog restarts koha-worker on failure" \
 echo ""
 echo "# --- Runtime checks ---"
 
-KOHA_CONTAINER="${KOHA_CONTAINER:-koha}"
-if ! docker inspect "${KOHA_CONTAINER}" >/dev/null 2>&1; then
+KOHA_CONTAINER="${KOHA_CONTAINER:-}"
+if [[ -z "${KOHA_CONTAINER}" ]]; then
+    skip "Phase 5 runtime checks" "set KOHA_CONTAINER to an explicitly selected test container"
+elif ! docker inspect "${KOHA_CONTAINER}" >/dev/null 2>&1; then
     skip "crond process is running in container"       "Container '${KOHA_CONTAINER}' is not running"
     skip "/etc/periodic/hourly/koha-hourly installed"  "Container '${KOHA_CONTAINER}' is not running"
     skip "/etc/periodic/daily/koha-daily installed"    "Container '${KOHA_CONTAINER}' is not running"
@@ -179,6 +208,24 @@ else
         not_ok "/etc/periodic/daily/koha-daily installed"
     fi
 
+    if docker exec "${KOHA_CONTAINER}" sh -lc '
+        test -f /build/files-alpine/lib/run-sh-alpine.sh &&
+        test -f /build/files-alpine/templates/koha-vhost.conf.in
+    ' >/dev/null 2>&1; then
+        ok "runtime startup helper and vhost template are present"
+    else
+        not_ok "runtime startup helper and vhost template are present"
+    fi
+
+    if docker exec "${KOHA_CONTAINER}" sh -lc '
+        test ! -e /build/files-alpine/mariadb-ssl &&
+        test ! -e /build/files-alpine/misc4dev
+    ' >/dev/null 2>&1; then
+        ok "runtime image excludes development TLS keys and misc4dev helper tree"
+    else
+        not_ok "runtime image excludes development TLS keys and misc4dev helper tree"
+    fi
+
     if docker exec "${KOHA_CONTAINER}" test -f /etc/init.d/koha-plack >/dev/null 2>&1; then
         ok "/etc/init.d/koha-plack installed in image"
     else
@@ -191,12 +238,83 @@ else
         not_ok "/etc/init.d/koha-worker installed in image"
     fi
 
-    # Watchdog: run.sh should not have exited (it's still blocked in run_service_watchdog).
-    # We check that the PID 1 process (bash run.sh) is still alive.
-    if docker exec "${KOHA_CONTAINER}" test -f /ktd_ready >/dev/null 2>&1; then
-        ok "watchdog process is alive in container (ktd_ready marker exists)"
+    if docker exec "${KOHA_CONTAINER}" koha-shell --help >/dev/null 2>&1; then
+        ok "koha-shell command is executable"
     else
-        not_ok "watchdog process is alive in container (ktd_ready marker exists)"
+        not_ok "koha-shell command is executable"
+    fi
+
+    koha_instance="$(docker exec "${KOHA_CONTAINER}" sh -lc 'printf "%s" "${KOHA_INSTANCE:-kohadev}"' 2>/dev/null)"
+    if docker exec "${KOHA_CONTAINER}" sh -lc 'test -d /usr/share/koha/lib' >/dev/null 2>&1 \
+        && docker exec "${KOHA_CONTAINER}" koha-shell -c 'printf "%s\n" "$PERL5LIB"' "${koha_instance}" 2>/dev/null | grep -Fxq '/usr/share/koha/lib'; then
+        ok "koha-shell loads the packaged PERL5LIB for this non-git instance"
+    else
+        not_ok "koha-shell loads the packaged PERL5LIB for this non-git instance"
+    fi
+
+    if docker exec "${KOHA_CONTAINER}" sh -lc 'grep -a -q "/usr/local/bin/run.sh" /proc/1/cmdline' >/dev/null 2>&1; then
+        ok "PID 1 is the live Alpine run.sh watchdog"
+    else
+        not_ok "PID 1 is the live Alpine run.sh watchdog"
+    fi
+
+    if docker logs "${KOHA_CONTAINER}" 2>&1 | grep -q '\[watchdog\] Service watchdog started'; then
+        ok "watchdog startup is recorded in container logs"
+    else
+        not_ok "watchdog startup is recorded in container logs"
+    fi
+
+    if docker exec "${KOHA_CONTAINER}" sh -lc 'id apache | grep -qw kohadev-koha'; then
+        ok "Apache has membership in the Koha runtime group"
+    else
+        not_ok "Apache has membership in the Koha runtime group"
+    fi
+
+    socket_permissions="$(docker exec "${KOHA_CONTAINER}" stat -c '%a:%G' "/var/run/koha/${koha_instance}/plack.sock" 2>/dev/null || true)"
+    if [[ "${socket_permissions}" == "660:kohadev-koha" ]]; then
+        ok "Plack socket is group-writable without world access"
+    else
+        not_ok "Plack socket is group-writable without world access (${socket_permissions:-missing})"
+    fi
+
+    if docker exec "${KOHA_CONTAINER}" sh -lc '
+        find "/etc/koha/sites/${KOHASITE:-kohadev}" \
+             "/var/cache/koha/${KOHASITE:-kohadev}" \
+             "/var/log/koha/${KOHASITE:-kohadev}" \
+             "/var/run/koha/${KOHASITE:-kohadev}" \
+             "/var/lib/koha/${KOHASITE:-kohadev}/uploads" \
+             "/var/lib/koha/${KOHASITE:-kohadev}/tmp" \
+             -perm -0002 -print -quit | grep -q .
+    '; then
+        not_ok "Koha runtime paths are not world-writable"
+    else
+        ok "Koha runtime paths are not world-writable"
+    fi
+
+    if docker exec "${KOHA_CONTAINER}" sh -lc '
+        for file in /etc/mysql/koha-common.cnf /etc/mysql/debian.cnf \
+                    "/etc/mysql/koha_${KOHASITE:-kohadev}.cnf"; do
+            test "$(stat -c "%a:%u" "$file")" = "600:0" || exit 1
+        done
+    '; then
+        ok "generated MySQL credential files are root-only"
+    else
+        not_ok "generated MySQL credential files are root-only"
+    fi
+
+    health_status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "${KOHA_CONTAINER}")"
+    if [[ "${health_status}" == "healthy" ]]; then
+        ok "container healthcheck reports Plack and HTTP readiness"
+    else
+        not_ok "container healthcheck reports Plack and HTTP readiness (${health_status:-missing})"
+    fi
+
+    capability_config="$(docker inspect --format '{{json .HostConfig.CapDrop}}|{{json .HostConfig.CapAdd}}' "${KOHA_CONTAINER}")"
+    expected_capabilities='["ALL"]|["CAP_CHOWN","CAP_DAC_OVERRIDE","CAP_FOWNER","CAP_KILL","CAP_NET_BIND_SERVICE","CAP_SETGID","CAP_SETUID"]'
+    if [[ "${capability_config}" == "${expected_capabilities}" ]]; then
+        ok "container drops all capabilities and uses the reviewed allowlist"
+    else
+        not_ok "container drops all capabilities and uses the reviewed allowlist"
     fi
 fi
 

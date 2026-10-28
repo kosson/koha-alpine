@@ -3,8 +3,8 @@
 #
 # Alpine Koha startup smoke test:
 # - verifies locale/timezone runtime prerequisites
-# - verifies web runtime is active
-# - verifies OPAC/Intranet endpoints are reachable and not 5xx
+# - verifies Plack and the web runtime are active
+# - verifies OPAC/Intranet and REST API endpoints are reachable
 # - prints compact diagnostics on failure
 #
 # Usage:
@@ -142,8 +142,19 @@ else
     not_ok "web runtime is active (httpd process or local HTTP response)"
 fi
 
+if compose exec -T koha sh -lc '
+    koha-plack --status "${KOHASITE:-kohadev}" >/dev/null \
+    && test -S "/var/run/koha/${KOHASITE:-kohadev}/plack.sock"
+'; then
+    ok "Plack process and Unix socket are active"
+else
+    not_ok "Plack process and Unix socket are active"
+fi
+
 opac_code="$(compose exec -T koha sh -lc 'curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080 || true')"
 intra_code="$(compose exec -T koha sh -lc 'curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8081 || true')"
+opac_api_code="$(compose exec -T koha sh -lc 'curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1:8080/api/v1/patrons/ || true')"
+intra_api_code="$(compose exec -T koha sh -lc 'curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1:8081/api/v1/patrons/ || true')"
 
 if [[ "${opac_code}" =~ ^[0-9]{3}$ ]] && (( opac_code >= 200 && opac_code < 500 )); then
     ok "OPAC endpoint is reachable (HTTP ${opac_code})"
@@ -155,6 +166,18 @@ if [[ "${intra_code}" =~ ^[0-9]{3}$ ]] && (( intra_code >= 200 && intra_code < 5
     ok "Intranet endpoint is reachable (HTTP ${intra_code})"
 else
     not_ok "Intranet endpoint is reachable (HTTP ${intra_code:-n/a})"
+fi
+
+if [[ "${opac_api_code}" == "401" ]]; then
+    ok "OPAC REST API route reaches Koha (unauthenticated HTTP 401)"
+else
+    not_ok "OPAC REST API route reaches Koha (expected HTTP 401, got ${opac_api_code:-n/a})"
+fi
+
+if [[ "${intra_api_code}" == "401" ]]; then
+    ok "Intranet REST API route reaches Koha (unauthenticated HTTP 401)"
+else
+    not_ok "Intranet REST API route reaches Koha (expected HTTP 401, got ${intra_api_code:-n/a})"
 fi
 
 if [[ ${FAIL} -gt 0 ]]; then

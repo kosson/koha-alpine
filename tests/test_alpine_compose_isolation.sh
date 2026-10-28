@@ -76,6 +76,39 @@ else
     not_ok "container env file can be overridden without editing env/.env"
 fi
 
+if grep -Fq '"stop_grace_period": "1m0s"' <<<"${CONFIG}"; then
+    ok "Koha receives a 60-second graceful-stop window"
+else
+    not_ok "Koha receives a 60-second graceful-stop window"
+fi
+
+CAP_ADD_BLOCK="$(sed -n '/"cap_add": \[/,/]/p' <<<"${CONFIG}")"
+CAP_ADD_COUNT="$(grep -o '"[A-Z_]*"' <<<"${CAP_ADD_BLOCK}" | wc -l)"
+if grep -Fq '"cap_drop": [' <<<"${CONFIG}" &&
+    grep -Fq '"ALL"' <<<"${CONFIG}" &&
+    [[ "${CAP_ADD_COUNT}" -eq 7 ]] &&
+    grep -Fq '"CHOWN"' <<<"${CAP_ADD_BLOCK}" &&
+    grep -Fq '"DAC_OVERRIDE"' <<<"${CAP_ADD_BLOCK}" &&
+    grep -Fq '"FOWNER"' <<<"${CAP_ADD_BLOCK}" &&
+    grep -Fq '"KILL"' <<<"${CAP_ADD_BLOCK}" &&
+    grep -Fq '"NET_BIND_SERVICE"' <<<"${CAP_ADD_BLOCK}" &&
+    grep -Fq '"SETGID"' <<<"${CAP_ADD_BLOCK}" &&
+    grep -Fq '"SETUID"' <<<"${CAP_ADD_BLOCK}"; then
+    ok "Koha drops all capabilities and adds only an explicit allowlist"
+else
+    not_ok "Koha drops all capabilities and adds only an explicit allowlist"
+fi
+
+if grep -Fq '/usr/sbin/koha-plack --status' <<<"${CONFIG}" &&
+    grep -Fq 'plack.sock' <<<"${CONFIG}" &&
+    grep -Fq '127.0.0.1:8080' <<<"${CONFIG}" &&
+    grep -Fq '127.0.0.1:8081' <<<"${CONFIG}" &&
+    grep -Fq '"start_period": "10m0s"' <<<"${CONFIG}"; then
+    ok "Koha healthcheck requires Plack and both HTTP endpoints"
+else
+    not_ok "Koha healthcheck requires Plack and both HTTP endpoints"
+fi
+
 echo ""
 echo "1..${_N}"
 echo "# Passed: ${PASS}  Failed: ${FAIL}"

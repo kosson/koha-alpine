@@ -50,12 +50,33 @@ services:
       dockerfile: Dockerfile-Alpine
       target: dev-runtime
     image: ${KOHA_ALPINE_IMAGE_TAG:-kosson/koha-alpine:26.11}
+    stop_grace_period: 60s
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          /usr/sbin/koha-plack --status "$${KOHASITE:-kohadev}" >/dev/null 2>&1
+          && test -S "/var/run/koha/$${KOHASITE:-kohadev}/plack.sock"
+          && curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8080/ >/dev/null
+          && curl --fail --silent --show-error --max-time 5 http://127.0.0.1:8081/ >/dev/null
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 10m
     depends_on:
       - db
       - memcached
       - rabbitmq
-    cap_add:
+    cap_drop:
       - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - KILL
+      - NET_BIND_SERVICE
+      - SETGID
+      - SETUID
     volumes:
       - ${SYNC_REPO}:/kohadevbox/koha
       - ${OPENSEARCH_CA_CERT:-/dev/null}:/kohadevbox/opensearch-root-ca.pem:ro

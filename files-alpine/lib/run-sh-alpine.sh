@@ -18,11 +18,14 @@ append_if_absent()
 # echo chain that was in run.sh.
 write_db_client_configs() {
     local instance="$1"
+    local previous_umask
+    previous_umask="$(umask)"
+    umask 0077
     mkdir -p /etc/mysql
 
     {
         printf '[client]\nhost     = %s\nuser     = root\npassword = %s\n' \
-            "${DB_HOSTNAME}" "${KOHA_DB_ROOT_PASSWORD}"
+            "${DB_HOST}" "${KOHA_DB_ROOT_PASSWORD}"
         if [ "${KOHA_DB_USE_TLS:-}" = "yes" ]; then
             printf 'ssl      = on\n'
             [ -n "${KOHA_DB_TLS_CA_CERTIFICATE:-}" ]     && printf 'ssl-ca   = %s\n' "${KOHA_DB_TLS_CA_CERTIFICATE}" || true
@@ -37,7 +40,7 @@ write_db_client_configs() {
 
     {
         printf '[client]\nhost     = %s\nuser     = %s\npassword = %s\n' \
-            "${DB_HOSTNAME}" "${DB_USER}" "${DB_PASSWORD}"
+            "${DB_HOST}" "${DB_USER}" "${DB_PASS}"
         if [ "${KOHA_DB_USE_TLS:-}" = "yes" ]; then
             printf 'ssl      = on\n'
             [ -n "${KOHA_DB_TLS_CA_CERTIFICATE:-}" ]     && printf 'ssl-ca   = %s\n' "${KOHA_DB_TLS_CA_CERTIFICATE}" || true
@@ -47,6 +50,8 @@ write_db_client_configs() {
             printf 'ssl      = off\nskip-ssl\n'
         fi
     } > "/etc/mysql/koha_${instance}.cnf"
+    chmod 0600 /etc/mysql/koha-common.cnf /etc/mysql/debian.cnf "/etc/mysql/koha_${instance}.cnf"
+    umask "${previous_umask}"
 }
 
 install_os_packages() {
@@ -174,14 +179,25 @@ enable_instance_services() {
 }
 
 start_koha_service() {
-    if command -v koha-plack >/dev/null 2>&1; then
-        koha-plack --start "${KOHA_INSTANCE}" >/dev/null 2>&1 || true
+    if ! command -v koha-plack >/dev/null 2>&1; then
+        echo "[service] ERROR: koha-plack command is required but unavailable" >&2
+        return 1
     fi
 
-    if command -v koha-worker >/dev/null 2>&1; then
-        koha-worker --start "${KOHA_INSTANCE}" >/dev/null 2>&1 || true
-    else
-        echo "[service] koha-worker command not available; background workers not started"
+    if ! koha-plack --start "${KOHA_INSTANCE}"; then
+        echo "[service] ERROR: koha-plack failed to start" >&2
+        return 1
+    fi
+
+    if ! command -v koha-worker >/dev/null 2>&1; then
+        echo "[service] ERROR: koha-worker command is required but unavailable" >&2
+        koha-plack --stop "${KOHA_INSTANCE}" || true
+        return 1
+    fi
+    if ! koha-worker --start "${KOHA_INSTANCE}"; then
+        echo "[service] ERROR: koha-worker failed to start" >&2
+        koha-plack --stop "${KOHA_INSTANCE}" || true
+        return 1
     fi
 }
 
@@ -192,12 +208,15 @@ stop_apache_service() {
 }
 
 start_apache_service() {
-    if command -v httpd >/dev/null 2>&1; then
-        httpd -k start >/dev/null 2>&1 || true
-        return 0
+    if ! command -v httpd >/dev/null 2>&1; then
+        echo "[service] ERROR: httpd is required but unavailable" >&2
+        return 1
     fi
 
-    echo "[service] httpd not available; apache start skipped"
+    if ! httpd -k start; then
+        echo "[service] ERROR: httpd failed to start" >&2
+        return 1
+    fi
 }
 
 bootstrap_koha_instance() {
@@ -215,7 +234,7 @@ bootstrap_koha_instance() {
 
         if ! koha-create "${koha_create_mode}" \
             --db-user "${DB_USER}" \
-            --db-password "${DB_PASSWORD}" \
+            --db-password "${DB_PASS}" \
             --db-name "${DB_NAME}" \
             --memcached-servers memcached:11211 \
             --mb-host "${MESSAGE_BROKER_HOST}" \
@@ -291,12 +310,16 @@ install_git_hooks() {
 
 # Phase 5: Start Alpine crond for /etc/periodic/ maintenance tasks.
 start_crond() {
-    if command -v crond >/dev/null 2>&1; then
-        crond -b -l 2 2>/dev/null || true
-        echo "[crond] Alpine crond started (periodic tasks in /etc/periodic/)"
-    else
-        echo "[crond] WARNING: crond not available; scheduled maintenance tasks will not run"
+    if ! command -v crond >/dev/null 2>&1; then
+        echo "[crond] ERROR: crond is required but unavailable" >&2
+        return 1
     fi
+
+    if ! crond -b -l 2; then
+        echo "[crond] ERROR: failed to start crond" >&2
+        return 1
+    fi
+    echo "[crond] Alpine crond started (periodic tasks in /etc/periodic/)"
 }
 
 # Phase 5: Service watchdog — monitors koha-plack and koha-worker and restarts
@@ -334,13 +357,17 @@ run_service_watchdog() {
         if [ "${_plack_expected}" = "yes" ]; then
             koha-plack --status "${instance}" >/dev/null 2>&1 || {
                 echo "[watchdog] koha-plack is down; restarting..."
-                koha-plack --start "${instance}" >/dev/null 2>&1 || true
+                if ! koha-plack --start "${instance}"; then
+                    echo "[watchdog] ERROR: koha-plack restart attempt failed" >&2
+                fi
             }
         fi
         if [ "${_worker_expected}" = "yes" ]; then
             koha-worker --status "${instance}" >/dev/null 2>&1 || {
                 echo "[watchdog] koha-worker is down; restarting..."
-                koha-worker --start "${instance}" >/dev/null 2>&1 || true
+                if ! koha-worker --start "${instance}"; then
+                    echo "[watchdog] ERROR: koha-worker restart attempt failed" >&2
+                fi
             }
         fi
         sleep "${interval}" &

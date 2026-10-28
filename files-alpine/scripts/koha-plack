@@ -12,6 +12,7 @@
 # included from the rendered vhost) over a unix socket — matching upstream Koha's
 # actual production architecture.
 set -e
+umask 0007
 GIT_INSTALL="${GIT_INSTALL:-}"
 
 if [ -r /usr/sbin/koha-functions.sh ]; then
@@ -42,9 +43,10 @@ ERROR_LOG="${LOG_DIR}/plack-error.log"
 ACCESS_LOG="${LOG_DIR}/plack.log"
 
 mkdir -p "$LOG_DIR" "$RUN_DIR"
-chown -R "${INSTANCE}-koha:${INSTANCE}-koha" "$LOG_DIR" "$RUN_DIR" 2>/dev/null || true
+chown "${INSTANCE}-koha:${INSTANCE}-koha" "$LOG_DIR" "$RUN_DIR"
 touch "$ERROR_LOG" "$ACCESS_LOG"
-chown "${INSTANCE}-koha:${INSTANCE}-koha" "$ERROR_LOG" "$ACCESS_LOG" 2>/dev/null || true
+chown "${INSTANCE}-koha:${INSTANCE}-koha" "$ERROR_LOG" "$ACCESS_LOG"
+chmod 0660 "$ERROR_LOG" "$ACCESS_LOG"
 
 case "$1" in
   --enable)
@@ -91,9 +93,8 @@ case "$1" in
           --error-log '$ERROR_LOG' --access-log '$ACCESS_LOG' \
           '$PSGI_FILE'" 2>>"$ERROR_LOG" || true
     sleep 2
-    # Alpine's Apache runs as the 'apache' user, not the instance user that owns
-    # this socket; without world read+write it connects with "Permission denied".
-    chmod 777 "$SOCKET" 2>/dev/null || true
+    chown "${INSTANCE}-koha:${INSTANCE}-koha" "$SOCKET"
+    chmod 0660 "$SOCKET"
     if [ -S "$SOCKET" ] && [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
       echo "[plack] Started pid=$(cat "$PIDFILE") socket=$SOCKET"
       exit 0

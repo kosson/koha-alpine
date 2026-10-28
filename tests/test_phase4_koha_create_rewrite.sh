@@ -71,6 +71,8 @@ assert_file_not_contains "Dockerfile no longer spoofs mpm_itk" 'mpm_itk_module' 
 assert_file_contains "koha-create supports --db-user CLI arg" '--db-user\)' "$SCRIPT_FILE"
 assert_file_contains "koha-create supports --db-password CLI arg" '--db-password\)' "$SCRIPT_FILE"
 assert_file_contains "koha-create supports --db-name CLI arg" '--db-name\)' "$SCRIPT_FILE"
+assert_file_contains "koha-create does not source an empty optional config path" \
+    'if \[ -n "\$CLO_CONFIGFILE" \] && \[ -r "\$CLO_CONFIGFILE" \]; then' "$SCRIPT_FILE"
 
 runtime_available=0
 if docker image inspect "$KOHA_IMAGE" >/dev/null 2>&1; then
@@ -110,24 +112,20 @@ if ! docker inspect "${KOHA_CONTAINER}" >/dev/null 2>&1; then
 else
     _instance=$(docker exec "${KOHA_CONTAINER}" sh -c 'echo "${KOHA_INSTANCE:-kohadev}"' 2>/dev/null || echo "kohadev")
 
-    if docker exec "${KOHA_CONTAINER}" grep -q "^${_instance}:" /etc/koha/passwd 2>/dev/null; then
-        ok "/etc/koha/passwd written with instance entry"
-    else
-        not_ok "/etc/koha/passwd written with instance entry"
-    fi
-
     if docker exec "${KOHA_CONTAINER}" test -f "/etc/koha/sites/${_instance}/koha-conf.xml" 2>/dev/null; then
         ok "koha-conf.xml rendered for instance"
     else
         not_ok "koha-conf.xml rendered for instance"
     fi
 
-    # Re-run --use-db directly to verify idempotency and that credential CLI args reach koha-create.
+    # Exercise the Alpine wrapper explicitly; the current entrypoint renders its own
+    # configuration and does not populate /etc/koha/passwd during normal startup.
+    _rerun_exit=0
     _rerun_out=$(docker exec "${KOHA_CONTAINER}" /bin/sh -c '
         koha-create --use-db \
-            --db-user     "${DB_USER}" \
-            --db-password "${DB_PASSWORD}" \
-            --db-name     "${DB_NAME}" \
+            --db-user     "koha_${KOHA_INSTANCE:-kohadev}" \
+            --db-password "${KOHA_DB_PASSWORD}" \
+            --db-name     "koha_${KOHA_INSTANCE:-kohadev}" \
             --memcached-servers memcached:11211 \
             --mb-host  "${MESSAGE_BROKER_HOST}" \
             --mb-port  "${MESSAGE_BROKER_PORT}" \
@@ -135,8 +133,7 @@ else
             --mb-pass  "${MESSAGE_BROKER_PASS}" \
             --mb-vhost "${MESSAGE_BROKER_VHOST}" \
             "${KOHA_INSTANCE:-kohadev}" 2>&1
-    ')
-    _rerun_exit=$?
+    ') || _rerun_exit=$?
     if [ "${_rerun_exit}" -eq 0 ]; then
         ok "koha-create --use-db re-invocation is idempotent"
     else
@@ -147,6 +144,12 @@ else
         not_ok "idempotent re-invocation has no Access denied error"
     else
         ok "idempotent re-invocation has no Access denied error"
+    fi
+
+    if docker exec "${KOHA_CONTAINER}" grep -q "^${_instance}:" /etc/koha/passwd 2>/dev/null; then
+        ok "koha-create writes the instance entry to /etc/koha/passwd"
+    else
+        not_ok "koha-create writes the instance entry to /etc/koha/passwd"
     fi
 fi
 

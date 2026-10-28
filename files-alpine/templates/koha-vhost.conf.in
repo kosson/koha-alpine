@@ -23,6 +23,8 @@
         ProxyPassReverse /cgi-bin/koha/svc "unix:/var/run/koha/${KOHA_INSTANCE}/plack.sock|http://localhost/intranet_svc"
         ProxyPass /cgi-bin/koha "unix:/var/run/koha/${KOHA_INSTANCE}/plack.sock|http://localhost/intranet"
         ProxyPassReverse /cgi-bin/koha "unix:/var/run/koha/${KOHA_INSTANCE}/plack.sock|http://localhost/intranet"
+        RewriteCond %{REQUEST_URI} !^/api/v[0-1]+/app.pl
+        RewriteRule ^/api/(v[0-9]+)/(.*)$ /api/$1/app.pl/api/$1/$2 [L,PT]
         ProxyPass /api "unix:/var/run/koha/${KOHA_INSTANCE}/plack.sock|http://localhost/api"
         ProxyPassReverse /api "unix:/var/run/koha/${KOHA_INSTANCE}/plack.sock|http://localhost/api"
     </IfModule>
@@ -61,6 +63,8 @@
         ProxyPassReverse /index.html "unix:/var/run/koha/${KOHA_INSTANCE}/plack.sock|http://localhost/opac/opac-main.pl"
         ProxyPass /search "unix:/var/run/koha/${KOHA_INSTANCE}/plack.sock|http://localhost/opac/opac-search.pl"
         ProxyPassReverse /search "unix:/var/run/koha/${KOHA_INSTANCE}/plack.sock|http://localhost/opac/opac-search.pl"
+        RewriteCond %{REQUEST_URI} !^/api/v[0-1]+/app.pl
+        RewriteRule ^/api/(v[0-9]+)/(.*)$ /api/$1/app.pl/api/$1/$2 [L,PT]
         ProxyPass /api "unix:/var/run/koha/${KOHA_INSTANCE}/plack.sock|http://localhost/api"
         ProxyPassReverse /api "unix:/var/run/koha/${KOHA_INSTANCE}/plack.sock|http://localhost/api"
     </IfModule>
