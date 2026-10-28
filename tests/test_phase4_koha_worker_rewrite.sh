@@ -52,7 +52,7 @@ else
     not_ok "Alpine koha-worker script is executable"
 fi
 
-if /bin/sh -n "$SCRIPT_FILE" >/dev/null 2>&1; then
+if bash -n "$SCRIPT_FILE" >/dev/null 2>&1; then
     ok "Alpine koha-worker shell syntax is valid"
 else
     not_ok "Alpine koha-worker shell syntax is valid"
@@ -65,9 +65,16 @@ assert_file_not_contains "koha-worker avoids apt-cache" 'apt-cache' "$SCRIPT_FIL
 assert_file_not_contains "koha-worker avoids dpkg-query" 'dpkg-query' "$SCRIPT_FILE"
 assert_file_not_contains "koha-worker avoids lsb_release" 'lsb_release' "$SCRIPT_FILE"
 assert_file_contains "koha-worker includes queue flag" '--queue' "$SCRIPT_FILE"
+assert_file_contains "koha-worker locates current Koha worker path" 'misc/workers/background_jobs_worker\.pl' "$SCRIPT_FILE"
+assert_file_contains "koha-worker supports all configured queues" --all-queues "$SCRIPT_FILE"
 assert_file_contains "koha-worker includes Alpine process fallback" 'kill -0' "$SCRIPT_FILE"
+if "$SCRIPT_FILE" --help >/dev/null 2>&1; then
+    ok "koha-worker --help exits successfully without setup"
+else
+    not_ok "koha-worker --help exits successfully without setup"
+fi
 
-assert_file_contains "Dockerfile installs Alpine koha-worker override" 'install -m 0755 /kohadevbox/files-alpine/scripts/koha-worker /usr/sbin/koha-worker' "$DOCKERFILE"
+assert_file_contains "Dockerfile installs Alpine command overrides after asset staging" 'for script in koha-create koha-plack koha-worker koha-functions\.sh' "$DOCKERFILE"
 
 runtime_available=0
 if docker image inspect "$KOHA_IMAGE" >/dev/null 2>&1; then

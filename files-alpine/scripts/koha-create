@@ -4,10 +4,14 @@ export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/kohad
 export PERL5LIB="${KOHA_PATH:-/kohadevbox/koha}/lib:/kohadevbox/koha/lib:/usr/local/lib/perl5/site_perl:/usr/local/share/perl5/site_perl:/usr/lib/perl5/vendor_perl:/usr/share/perl5/vendor_perl:${PERL5LIB:-}"
 set -eu
 
+GIT_INSTALL="${GIT_INSTALL:-}"
+
 [ -r /etc/default/koha-common ] && . /etc/default/koha-common 3>&- 2>/dev/null || . /etc/default/koha-common 2>/dev/null || true
 [ -r /etc/koha/koha-sites.conf ] && . /etc/koha/koha-sites.conf 3>&- 2>/dev/null || . /etc/koha/koha-sites.conf 2>/dev/null || true
 
-if [ -f "${KOHA_PATH:-/kohadevbox/koha}/bin/koha-functions.sh" ]; then
+if [ -r /usr/sbin/koha-functions.sh ]; then
+  . /usr/sbin/koha-functions.sh 3>&- 2>/dev/null || . /usr/sbin/koha-functions.sh 2>/dev/null || true
+elif [ -f "${KOHA_PATH:-/kohadevbox/koha}/bin/koha-functions.sh" ]; then
   . "${KOHA_PATH:-/kohadevbox/koha}/bin/koha-functions.sh" 3>&- 2>/dev/null || . "${KOHA_PATH:-/kohadevbox/koha}/bin/koha-functions.sh" 2>/dev/null || true
 elif [ -f "/kohadevbox/koha/bin/koha-functions.sh" ]; then
   . "/kohadevbox/koha/bin/koha-functions.sh" 3>&- 2>/dev/null || . "/kohadevbox/koha/bin/koha-functions.sh" 2>/dev/null || true

@@ -1,0 +1,8 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^git ls-files -u && printf '\\\\nConflict markers in env:\\\\n' && rg -n '\\^\\(<<<<<<<\\|=======\\|>>>>>>>\\)' env/\\.env OpenSearch-3\\.6/assets/opensearch/config/os01/opensearch-security/internal_users\\.yml$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}

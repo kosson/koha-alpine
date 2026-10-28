@@ -26,6 +26,7 @@ echo ""
 # ── Static: Dockerfile has busybox-extras ────────────────────────────────────
 echo "# --- Static: Dockerfile ---"
 assert_contains "Dockerfile adds busybox-extras" "busybox-extras" "${DOCKERFILE}"
+assert_contains "Runtime PATH includes Alpine sbin directories" "/usr/sbin:/bin:/sbin" "${DOCKERFILE}"
 
 # ── Runtime: probe the built image ───────────────────────────────────────────
 # Detect a running or available koha-base image to exec into.

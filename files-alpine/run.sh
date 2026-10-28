@@ -60,8 +60,12 @@ ls -l /usr/share/koha/intranet/htdocs/intranet-tmpl/lib/jquery/jquery-3.6.0.min.
 # instead of introducing a second, overlapping flag.
 if [ "${SKIP_YARN_INSTALL:-no}" != "yes" ] && [ ! -f "${KOHADEVBOX}/koha-tmpl/opac-tmpl/bootstrap/css/opac.css" ]; then
   echo "[run.sh] Compiled CSS/JS assets missing; running yarn install + build (set SKIP_YARN_INSTALL=yes to skip)..."
-  ( cd "${KOHADEVBOX}" && yarn install --frozen-lockfile 2>&1 | tail -20 && yarn build 2>&1 | tail -40 ) \
-    || echo "[run.sh] WARNING: yarn build failed; OPAC/staff pages will render without CSS/JS. Check node/yarn are installed and re-run manually: cd ${KOHADEVBOX} && yarn build"
+  (
+    set -o pipefail
+    cd "${KOHADEVBOX}"
+    yarn install --frozen-lockfile 2>&1 | tail -20
+    yarn build 2>&1 | tail -40
+  )
 fi
 
 # User setup for Alpine
@@ -123,6 +127,7 @@ sed -i \
 mv "${KOHACONF}.tmp" "${KOHACONF}"; chmod 644 "${KOHACONF}"
 cp /etc/koha/log4perl-site.conf.in /etc/koha/sites/${KOHASITE}/log4perl.conf 2>/dev/null || cp ${KOHADEVBOX}/debian/templates/log4perl-site.conf.in /etc/koha/sites/${KOHASITE}/log4perl.conf 2>/dev/null || true
 sed -i "s|__KOHASITE__|$KOHASITE|g; s|__LOG_DIR__|/var/log/koha/$KOHASITE|g" /etc/koha/sites/${KOHASITE}/log4perl.conf 2>/dev/null || true
+chown -R kohadev-koha:kohadev-koha /etc/koha/sites/${KOHASITE} /var/log/koha/${KOHASITE} /var/run/koha/${KOHASITE} /var/lib/koha/${KOHASITE} /var/cache/koha/${KOHASITE} /var/lock/koha/${KOHASITE}
 
 DB_IS_READY=0
 for i in $(seq 1 60); do
@@ -164,13 +169,13 @@ ADMIN_EXISTS=$(mysql -h ${DB_HOST} -u ${DB_USER} ${DB_NAME} -Nse "SELECT 1 FROM 
 if [ -z "$ADMIN_EXISTS" ]; then
   echo "[run.sh] Creating $ADMIN_USER"
   if ! su kohadev-koha -s /bin/sh -c "export KOHA_CONF=${KOHACONF} PERL5LIB=/opt/koha-perl/lib/perl5:${KOHADEVBOX}/lib:${KOHADEVBOX} KOHA_HOME=${KOHA_HOME}; cd ${KOHADEVBOX}; perl misc/devel/create_superlibrarian.pl --userid $ADMIN_USER --password $ADMIN_PASS --branchcode $ADMIN_BRANCH --categorycode $ADMIN_CATEGORY --cardnumber 1 --surname Admin"; then
-    echo "[run.sh] WARNING: create_superlibrarian.pl failed; continuing startup (an admin account may already exist under a different userid/cardnumber)"
+    echo "[run.sh] ERROR: create_superlibrarian.pl failed; refusing to start without the initial admin account" >&2
+    exit 1
   fi
 else
   echo "[run.sh] Superlibrarian $ADMIN_USER (or cardnumber 1) already exists"
 fi
 
-chown -R kohadev-koha:kohadev-koha /etc/koha/sites/${KOHASITE} /var/log/koha/${KOHASITE} /var/run/koha/${KOHASITE} /var/lib/koha/${KOHASITE} /var/cache/koha/${KOHASITE} 2>/dev/null || true
 echo "[run.sh] updatedatabase"; su kohadev-koha -s /bin/sh -c "export KOHA_CONF=${KOHACONF} PERL5LIB=/opt/koha-perl/lib/perl5:${KOHADEVBOX}/lib:${KOHADEVBOX} KOHA_HOME=${KOHA_HOME}; cd ${KOHADEVBOX}; perl -Ilib installer/data/mysql/updatedatabase.pl"
 
 # --- Apache + Plack + supervision -------------------------------------------

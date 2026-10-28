@@ -2,8 +2,6 @@
 # Alpine koha-functions override.
 # Loads upstream helpers, then replaces daemon-dependent running checks.
 
-set -eu
-
 if [ -r /usr/share/koha/bin/koha-functions.sh ]; then
     . /usr/share/koha/bin/koha-functions.sh
 else

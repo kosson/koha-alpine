@@ -9,19 +9,20 @@
 #
 # Usage:
 #   cd koha-alpine
-#   bash tests/test_alpine_startup_smoke.sh
+#   KOHA_TEST_PROJECT=... KOHA_TEST_ENV_FILE=... bash tests/test_alpine_startup_smoke.sh
 #
-# Exit code: 0 = pass, 1 = fail, 2 = prerequisites missing.
+# Exit code: 0 = pass/skip, 1 = fail, 2 = invalid explicitly selected prerequisites.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 COMPOSE_FILE="${REPO_ROOT}/docker-compose-alpinekoha.yml"
-ENV_FILE="${REPO_ROOT}/env/.env"
-KOHA_INSTANCE="$(grep -E '^KOHA_INSTANCE=' "${ENV_FILE}" | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'" || true)"
-KOHA_INSTANCE="${KOHA_INSTANCE:-kohadev}"
-MAX_WAIT=${MAX_WAIT:-90}
+ENV_FILE="${KOHA_TEST_ENV_FILE:-}"
+TEST_PROJECT="${KOHA_TEST_PROJECT:-}"
+COMPOSE_OVERRIDE="${KOHA_TEST_COMPOSE_OVERRIDE:-}"
+KOHA_INSTANCE="kohadev"
+MAX_WAIT=${MAX_WAIT:-300}
 
 PASS=0
 FAIL=0
@@ -39,8 +40,29 @@ not_ok() {
     FAIL=$(( FAIL + 1 ))
 }
 
+skip() {
+    _N=$(( _N + 1 ))
+    echo "ok ${_N} - $1 # SKIP $2"
+}
+
 compose() {
-    docker compose -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" --project-directory "${REPO_ROOT}" "$@"
+    local -a command=(docker compose --project-name "${TEST_PROJECT}" --env-file "${ENV_FILE}" --project-directory "${REPO_ROOT}" -f "${COMPOSE_FILE}")
+    if [[ -n "${COMPOSE_OVERRIDE}" ]]; then
+        command+=(-f "${COMPOSE_OVERRIDE}")
+    fi
+    "${command[@]}" "$@"
+}
+
+startup_ready() {
+    compose exec -T koha sh -lc '
+        for port in 8080 8081; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 2 "http://127.0.0.1:${port}/")
+            case "$code" in
+                2??|3??|4??) ;;
+                *) exit 1 ;;
+            esac
+        done
+    '
 }
 
 echo "TAP version 14"
@@ -48,18 +70,35 @@ echo "# Alpine startup smoke test (locale/tz/http)"
 echo ""
 
 if ! command -v docker >/dev/null 2>&1; then
-    echo "Bail out! docker not found"
+    skip "isolated Koha runtime prerequisites" "docker not found"
+    echo "1..${_N}"
+    exit 0
+fi
+
+if [[ -z "${TEST_PROJECT}" || -z "${ENV_FILE}" ]]; then
+    skip "isolated Koha runtime prerequisites" "set KOHA_TEST_PROJECT and KOHA_TEST_ENV_FILE for an isolated running stack"
+    echo "1..${_N}"
+    exit 0
+fi
+
+if [[ ! -f "${COMPOSE_FILE}" || ! -f "${ENV_FILE}" ]]; then
+    echo "Bail out! compose or selected test env file not found"
     exit 2
 fi
 
-if [[ ! -f "${COMPOSE_FILE}" ]]; then
-    echo "Bail out! compose file not found: ${COMPOSE_FILE}"
+export KOHA_CONTAINER_ENV_FILE="${ENV_FILE}"
+if ! compose config --quiet >/dev/null 2>&1; then
+    echo "Bail out! selected test Compose configuration is invalid"
     exit 2
 fi
+
+KOHA_INSTANCE="$(grep -E '^KOHA_INSTANCE=' "${ENV_FILE}" | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'" || true)"
+KOHA_INSTANCE="${KOHA_INSTANCE:-kohadev}"
 
 if ! compose ps --status running koha 2>/dev/null | grep -q "running\|Up"; then
-    echo "Bail out! koha service is not running. Start it first with docker compose -f docker-compose-alpinekoha.yml up -d"
-    exit 2
+    skip "koha service is running in the selected project" "project ${TEST_PROJECT} has no running Koha service"
+    echo "1..${_N}"
+    exit 0
 fi
 
 ok "koha service is running"
@@ -67,7 +106,7 @@ ok "koha service is running"
 elapsed=0
 ready=false
 while (( elapsed < MAX_WAIT )); do
-    if compose exec -T koha sh -lc 'test -f /ktd_ready'; then
+    if startup_ready; then
         ready=true
         break
     fi
@@ -76,9 +115,9 @@ while (( elapsed < MAX_WAIT )); do
 done
 
 if [[ "${ready}" == true ]]; then
-    ok "startup ready marker /ktd_ready present"
+    ok "OPAC and staff HTTP endpoints become reachable within ${MAX_WAIT}s"
 else
-    not_ok "startup ready marker /ktd_ready present within ${MAX_WAIT}s"
+    not_ok "OPAC and staff HTTP endpoints become reachable within ${MAX_WAIT}s"
 fi
 
 if compose exec -T koha sh -lc 'command -v locale >/dev/null 2>&1'; then

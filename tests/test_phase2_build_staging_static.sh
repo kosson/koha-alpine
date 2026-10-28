@@ -9,6 +9,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 HELPER_SH="${ROOT_DIR}/files-alpine/lib/run-sh-alpine.sh"
+PACKAGE_HELPER="${ROOT_DIR}/scripts/build-alpine-package.sh"
 DOCKERFILE="${ROOT_DIR}/Dockerfile-Alpine"
 
 PASS=0; FAIL=0; _N=0
@@ -49,11 +50,18 @@ assert_contains "SKIP_RUNTIME_ASSET_COPY guard present" "SKIP_RUNTIME_ASSET_COPY
 assert_contains "dev path calls build-alpine-package.sh" '/usr/local/bin/build-alpine-package.sh' "${HELPER_SH}"
 assert_not_contains "no cp_alpine_files.pl fallback remains" "cp_alpine_files.pl" "${HELPER_SH}"
 assert_not_contains "no cp_debian_files.pl fallback remains" "cp_debian_files.pl" "${HELPER_SH}"
+assert_contains "Koha htdocs destinations exist before manifest staging" "make_path('/usr/share/koha/intranet/htdocs', '/usr/share/koha/opac/htdocs');" "${PACKAGE_HELPER}"
 
 # --- Dockerfile checks ---
 assert_not_contains "koha source directory not copied into build context" "COPY koha /tmp/koha-build-src" "${DOCKERFILE}"
 assert_contains "prod-runtime stages assets from fetched git source" "/usr/local/bin/build-alpine-package.sh /kohadevbox/koha" "${DOCKERFILE}"
-assert_contains "SKIP_RUNTIME_ASSET_COPY set in prod-runtime" "ENV SKIP_RUNTIME_ASSET_COPY=yes" "${DOCKERFILE}"
+assert_contains "prod-runtime skips runtime asset copying" "SKIP_RUNTIME_ASSET_COPY=yes" "${DOCKERFILE}"
+assert_contains "node builder creates the Koha source parent before copying" "mkdir -p /kohadevbox" "${DOCKERFILE}"
+assert_contains "node builder copies only Koha source into its build context" "COPY koha/ /tmp/context/koha/" "${DOCKERFILE}"
+assert_contains "node builder fails on frontend asset build errors" "yarn build;" "${DOCKERFILE}"
+assert_contains "dev compose explicitly builds dev-runtime" "target: dev-runtime" "${ROOT_DIR}/docker-compose-alpinekoha.yml"
+assert_contains "dev runtime uses Node 22 for Koha's frontend toolchain" "COPY --from=node-builder /usr/local/bin/node /usr/local/bin/node" "${DOCKERFILE}"
+assert_contains "prod-runtime checks for a pinned source ref" 'test -n "${KOHA_GIT_REF}"' "${DOCKERFILE}"
 
 echo ""
 echo "1..${_N}"

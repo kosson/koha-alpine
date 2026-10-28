@@ -15,13 +15,69 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ALPINE_COMPOSE="${REPO_ROOT}/docker-compose-alpinekoha.yml"
-ENV_FILE="${REPO_ROOT}/env/.env"
+ENV_FILE="${KOHA_TEST_ENV_FILE:-}"
+TEST_PROJECT="${KOHA_TEST_PROJECT:-}"
+COMPOSE_OVERRIDE="${KOHA_TEST_COMPOSE_OVERRIDE:-}"
+
+if [[ -z "${TEST_PROJECT}" || -z "${ENV_FILE}" ]]; then
+    echo "SKIP: set KOHA_TEST_PROJECT and KOHA_TEST_ENV_FILE for a disposable isolated test stack"
+    exit 0
+fi
+
+if [[ ! "${TEST_PROJECT}" =~ ^koha-alpine-test-[A-Za-z0-9][A-Za-z0-9_-]*$ ]]; then
+    echo "Bail out! KOHA_TEST_PROJECT must use the unique koha-alpine-test-<suffix> prefix"
+    exit 2
+fi
+
+if [[ ! -f "${ALPINE_COMPOSE}" || ! -f "${ENV_FILE}" ]]; then
+    echo "Bail out! compose or selected test env file not found"
+    exit 2
+fi
+
+if ! command -v docker >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
+    echo "Bail out! docker and python3 are required for isolated volume verification"
+    exit 2
+fi
+
+export KOHA_CONTAINER_ENV_FILE="${ENV_FILE}"
+export KOHA_TEST_PROJECT KOHA_TEST_ENV_FILE KOHA_TEST_COMPOSE_OVERRIDE
+
+alpine_compose() {
+    local -a command=(docker compose --project-name "${TEST_PROJECT}" --env-file "${ENV_FILE}" --project-directory "${REPO_ROOT}" -f "${ALPINE_COMPOSE}")
+    if [[ -n "${COMPOSE_OVERRIDE}" ]]; then
+        command+=(-f "${COMPOSE_OVERRIDE}")
+    fi
+    "${command[@]}" "$@"
+}
+
+if ! alpine_compose config --quiet >/dev/null 2>&1; then
+    echo "Bail out! selected test Compose configuration is invalid"
+    exit 2
+fi
+
+if [[ -n "$(alpine_compose ps -q 2>/dev/null || true)" ]]; then
+    echo "Bail out! selected test project already has containers; use a new project name"
+    exit 2
+fi
+
+DB_VOLUME="$(alpine_compose config --format json | python3 -c 'import json, sys; print(json.load(sys.stdin)["volumes"]["koha-db-data"]["name"])')"
+if [[ "${DB_VOLUME}" != "${TEST_PROJECT}_"* ]]; then
+    echo "Bail out! DB volume is not scoped to the isolated project: ${DB_VOLUME}"
+    exit 2
+fi
+if docker volume inspect "${DB_VOLUME}" >/dev/null 2>&1; then
+    echo "Bail out! fresh-project DB volume already exists: ${DB_VOLUME}; choose a new project name"
+    exit 2
+fi
 
 KOHA_INSTANCE="$(grep -E '^KOHA_INSTANCE=' "${ENV_FILE}" | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'" || true)"
 KOHA_INSTANCE="${KOHA_INSTANCE:-kohadev}"
 DB_NAME="koha_${KOHA_INSTANCE}"
 DB_PASS="$(grep -E '^KOHA_DB_ROOT_PASSWORD=' "${ENV_FILE}" | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'" || true)"
-DB_PASS="${DB_PASS:-password}"
+if [[ -z "${DB_PASS}" ]]; then
+    echo "Bail out! KOHA_DB_ROOT_PASSWORD is empty in selected test env file"
+    exit 2
+fi
 
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 ARTIFACT_DIR="${SCRIPT_DIR}/artifacts/integration-${STAMP}"
@@ -42,10 +98,6 @@ log()  { echo -e "${BLUE}[$(date +%H:%M:%S)]${RESET} $*"; }
 ok()   { echo -e "${GREEN}[$(date +%H:%M:%S)]${RESET} $*"; }
 warn() { echo -e "${YELLOW}[$(date +%H:%M:%S)]${RESET} $*"; }
 err()  { echo -e "${RED}[$(date +%H:%M:%S)]${RESET} $*"; }
-
-alpine_compose() {
-    docker compose -f "${ALPINE_COMPOSE}" --env-file "${ENV_FILE}" --project-directory "${REPO_ROOT}" "$@"
-}
 
 wait_for_systempreferences() {
     local max_wait="${1:-420}"

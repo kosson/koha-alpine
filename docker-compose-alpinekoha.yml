@@ -23,7 +23,6 @@ services:
 
   memcached:
     image: memcached:1.6-alpine
-    container_name: koha-memcached
     networks:
       - kohanet
 
@@ -49,8 +48,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile-Alpine
+      target: dev-runtime
     image: ${KOHA_ALPINE_IMAGE_TAG:-kosson/koha-alpine:26.11}
-    container_name: koha-alpine
     depends_on:
       - db
       - memcached
@@ -69,7 +68,7 @@ services:
       - /cover_db
       - /tmp
     env_file:
-      - env/.env
+      - ${KOHA_CONTAINER_ENV_FILE:-env/.env}
     environment:
         COVERAGE: ${COVERAGE:-}
         CPAN: ${CPAN:-no}

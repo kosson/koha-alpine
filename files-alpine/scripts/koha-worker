@@ -1,89 +1,265 @@
 #!/bin/bash
-# koha-worker Alpine - v10 - compat with Koha 25.11 (background_jobs_worker.pl may not exist)
+
 set -e
-INSTANCE="${2:-${1:-kohadev}}"
-if [ "$1" = "--enable" ] || [ "$1" = "--disable" ]; then INSTANCE="${2:-kohadev}"; fi
-if [ "$1" = "--start" ] || [ "$1" = "--stop" ] || [ "$1" = "--restart" ] || [ "$1" = "--status" ]; then INSTANCE="${2:-kohadev}"; fi
+GIT_INSTALL="${GIT_INSTALL:-}"
+
+if [ -r /usr/sbin/koha-functions.sh ]; then
+    . /usr/sbin/koha-functions.sh
+elif [ -r /usr/share/koha/bin/koha-functions.sh ]; then
+    . /usr/share/koha/bin/koha-functions.sh
+fi
 
 KOHA_PATH="${KOHA_PATH:-/kohadevbox/koha}"
+KOHA_HOME="$KOHA_PATH"
 PERL5LIB_PATH="/opt/koha-perl/lib/perl5:${KOHA_PATH}/lib:${KOHA_PATH}"
-RUN_DIR="/var/run/koha/${INSTANCE}"
-LOG_DIR="/var/log/koha/${INSTANCE}"
-PIDFILE="${RUN_DIR}/worker.pid"
-WORKER_LOG="${LOG_DIR}/worker.log"
+action=""
+queue="default"
+all_queues=no
+quiet=no
 
-mkdir -p "$RUN_DIR" "$LOG_DIR"
-chown -R kohadev:kohadev /var/log/koha /var/run/koha 2>/dev/null || true
-touch "$WORKER_LOG"
-chown kohadev:kohadev "$WORKER_LOG" 2>/dev/null || true
+usage() {
+    cat <<'EOF'
+Usage: koha-worker [--start|--stop|--restart|--status] [--queue name|--all-queues] [--quiet] instance...
+       koha-worker [--enable|--disable] instance...
 
-# Find worker script - multiple possible locations across Koha versions
-find_worker(){
-  for f in \
-    "$KOHA_PATH/misc/background_jobs_worker.pl" \
-    "$KOHA_PATH/bin/background_jobs_worker.pl" \
-    "$KOHA_PATH/misc/worker.pl" \
-    "$KOHA_PATH/bin/worker.pl" \
-    "$KOHA_PATH/misc/background_jobs/background_jobs_worker.pl" \
-    "$KOHA_PATH/admin/background_jobs.pl"; do
-    [ -f "$f" ] && echo "$f" && return 0
-  done
-  return 1
+Manage Koha background-job workers. The default queue is "default".
+EOF
 }
 
-case "$1" in
-  --enable)
-    echo "[worker] --enable noop on Alpine (always enabled via file flag)"
-    mkdir -p "/etc/koha/sites/${INSTANCE}"
-    touch "/etc/koha/sites/${INSTANCE}/worker_enabled" 2>/dev/null || true
-    exit 0
-    ;;
-  --disable)
-    rm -f "/etc/koha/sites/${INSTANCE}/worker_enabled"
-    exit 0
-    ;;
-  --status)
-    if [ -f "$PIDFILE" ]; then
-      pid=$(cat "$PIDFILE")
-      if kill -0 "$pid" 2>/dev/null; then echo "[worker] running pid=$pid"; exit 0; fi
+set_action() {
+    if [ -n "$action" ]; then
+        echo "[worker] only one action can be specified" >&2
+        exit 2
     fi
-    # If no real worker exists in this Koha version, consider it OK (dummy)
-    if ! find_worker >/dev/null 2>&1; then
-      echo "[worker] No worker script found, considering up (compat mode)"
-      exit 0
-    fi
-    if pgrep -f "background_jobs" >/dev/null 2>&1; then echo "[worker] running (pgrep)"; exit 0; fi
-    echo "[worker] not running"
+    action=$1
+}
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -q|--quiet)
+            quiet=yes
+            shift
+            ;;
+        --start|--stop|--restart|--status|--enable|--disable)
+            set_action "${1#--}"
+            shift
+            ;;
+        --queue)
+            [ "$#" -ge 2 ] || { echo "[worker] --queue requires a queue name" >&2; exit 2; }
+            queue=$2
+            all_queues=no
+            shift 2
+            ;;
+        --all-queues)
+            all_queues=yes
+            shift
+            ;;
+        -*)
+            echo "[worker] unknown option: $1" >&2
+            exit 2
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+if [ -z "$action" ]; then
+    echo "[worker] an action is required" >&2
+    usage >&2
+    exit 2
+fi
+
+if [ "$#" -eq 0 ]; then
+    [ "$quiet" = yes ] || echo "[worker] at least one instance is required" >&2
     exit 1
-    ;;
-  --start)
-    WORKER=$(find_worker || true)
-    if [ -z "$WORKER" ]; then
-      echo "[worker] No worker script found, skipping dummy"
-      echo $$ > "$PIDFILE"
-      echo "[worker] dummy pid $$ started (compat for Koha $(grep -m1 VERSION $KOHA_PATH/Koha.pm 2>/dev/null || echo 'unknown'))"
-      exit 0
+fi
+
+if [ "$all_queues" = yes ]; then
+    if declare -F get_worker_queues >/dev/null 2>&1; then
+        read -r -a queues <<< "$(get_worker_queues | xargs)"
+    else
+        queues=(default long_tasks)
     fi
-    echo "[worker] Starting $WORKER for $INSTANCE"
-    rm -f "$PIDFILE"
-    PERL5LIB="$PERL5LIB_PATH" /usr/bin/perl "$WORKER" --instance "$INSTANCE" >>"$WORKER_LOG" 2>&1 &
-    echo $! > "$PIDFILE"
+else
+    queues=("$queue")
+fi
+
+valid_name() {
+    case "$1" in
+        ''|*[!A-Za-z0-9_-]*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+find_worker() {
+    for candidate in \
+        "$KOHA_PATH/misc/workers/background_jobs_worker.pl" \
+        "$KOHA_PATH/workers/background_jobs_worker.pl" \
+        "$KOHA_PATH/misc/background_jobs_worker.pl" \
+        "$KOHA_PATH/bin/background_jobs_worker.pl" \
+        "$KOHA_PATH/misc/worker.pl" \
+        "$KOHA_PATH/bin/worker.pl"; do
+        if [ -f "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+worker_name() {
+    if declare -F get_worker_name >/dev/null 2>&1; then
+        get_worker_name "$1" "$2"
+    elif [ -z "$2" ] || [ "$2" = default ]; then
+        printf '%s-koha-worker\n' "$1"
+    else
+        printf '%s-koha-worker-%s\n' "$1" "$2"
+    fi
+}
+
+worker_pid_is_live() {
+    local pidfile=$1 worker=$2 worker_queue=$3 pid command_line
+    [ -s "$pidfile" ] || return 1
+    pid=$(cat "$pidfile" 2>/dev/null || true)
+    case "$pid" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    kill -0 "$pid" 2>/dev/null || return 1
+    [ -r "/proc/${pid}/cmdline" ] || return 1
+    command_line=$(tr '\000' ' ' < "/proc/${pid}/cmdline")
+    case "$command_line" in
+        *"$worker"*'--queue '"$worker_queue"*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+start_worker() {
+    local instance=$1 worker_queue=$2 user pidfile worker koha_conf launcher_pid
+    local name
+
+    valid_name "$instance" && valid_name "$worker_queue" || {
+        echo "[worker] invalid instance or queue name" >&2
+        return 2
+    }
+
+    name=$(worker_name "$instance" "$worker_queue")
+    pidfile="/var/run/koha/${instance}/${name}.pid"
+    mkdir -p "/var/run/koha/${instance}" "/var/log/koha/${instance}"
+    user="${instance}-koha"
+    worker=$(find_worker) || {
+        echo "[worker] background_jobs_worker.pl not found under ${KOHA_PATH}" >&2
+        return 1
+    }
+    if worker_pid_is_live "$pidfile" "$worker" "$worker_queue"; then
+        echo "[worker] already running for ${instance} (${worker_queue})"
+        return 0
+    fi
+
+    rm -f "$pidfile"
+    koha_conf="/etc/koha/sites/${instance}/koha-conf.xml"
+    echo "[worker] starting ${instance} (${worker_queue})"
+    su "$user" -s /bin/sh -c '
+        pidfile=$1
+        export KOHA_CONF=$2 KOHA_HOME=$3 PERL5LIB=$4 GIT_INSTALL=1
+        cd "$5"
+        echo "$$" > "$pidfile"
+        exec "$6" --queue "$7"
+    ' koha-worker "$pidfile" "$koha_conf" "$KOHA_HOME" "$PERL5LIB_PATH" "$KOHA_PATH" "$worker" "$worker_queue" \
+        >> "/var/log/koha/${instance}/worker.log" 2>&1 &
+    launcher_pid=$!
     sleep 1
-    if kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then echo "[worker] started pid=$(cat "$PIDFILE")"; exit 0; else echo "[worker] failed"; cat "$WORKER_LOG" | tail -20; exit 1; fi
-    ;;
-  --stop)
-    if [ -f "$PIDFILE" ]; then kill "$(cat "$PIDFILE")" 2>/dev/null || true; rm -f "$PIDFILE"; fi
-    pkill -f "background_jobs_worker" 2>/dev/null || true
-    echo "[worker] stopped"
-    exit 0
-    ;;
-  --restart)
-    $0 --stop "$INSTANCE"
-    sleep 1
-    $0 --start "$INSTANCE"
-    ;;
-  *)
-    echo "Usage: $0 --enable|--disable|--start|--stop|--restart|--status [instance]"
-    exit 1
-    ;;
-esac
+    if worker_pid_is_live "$pidfile" "$worker" "$worker_queue"; then
+        echo "[worker] started ${instance} (${worker_queue}) pid=$(cat "$pidfile")"
+        return 0
+    fi
+    wait "$launcher_pid" || true
+    rm -f "$pidfile"
+    echo "[worker] failed to start ${instance} (${worker_queue}); see /var/log/koha/${instance}/worker.log" >&2
+    return 1
+}
+
+stop_worker() {
+    local instance=$1 worker_queue=$2 name pidfile worker pid attempt
+    valid_name "$instance" && valid_name "$worker_queue" || {
+        echo "[worker] invalid instance or queue name" >&2
+        return 2
+    }
+
+    name=$(worker_name "$instance" "$worker_queue")
+    pidfile="/var/run/koha/${instance}/${name}.pid"
+    worker=$(find_worker || true)
+    if [ -z "$worker" ] || ! worker_pid_is_live "$pidfile" "$worker" "$worker_queue"; then
+        rm -f "$pidfile"
+        [ "$quiet" = yes ] || echo "[worker] not running for ${instance} (${worker_queue})"
+        return 0
+    fi
+
+    pid=$(cat "$pidfile")
+    echo "[worker] stopping ${instance} (${worker_queue}) pid=${pid}"
+    kill -TERM "$pid" 2>/dev/null || true
+    attempt=0
+    while [ "$attempt" -lt 30 ] && worker_pid_is_live "$pidfile" "$worker" "$worker_queue"; do
+        sleep 1
+        attempt=$((attempt + 1))
+    done
+    if worker_pid_is_live "$pidfile" "$worker" "$worker_queue"; then
+        kill -KILL "$pid" 2>/dev/null || true
+    fi
+    rm -f "$pidfile"
+}
+
+set_enabled() {
+    local instance=$1
+    valid_name "$instance" || { echo "[worker] invalid instance name" >&2; return 2; }
+    mkdir -p "/etc/koha/sites/${instance}"
+    if [ "$action" = enable ]; then
+        touch "/etc/koha/sites/${instance}/worker_enabled"
+    else
+        rm -f "/etc/koha/sites/${instance}/worker_enabled"
+    fi
+}
+
+result=0
+for instance in "$@"; do
+    if ! valid_name "$instance"; then
+        [ "$quiet" = yes ] || echo "[worker] invalid instance name: ${instance}" >&2
+        result=1
+        continue
+    fi
+    if [ "$action" = enable ] || [ "$action" = disable ]; then
+        set_enabled "$instance" || result=1
+        continue
+    fi
+    for worker_queue in "${queues[@]}"; do
+        case "$action" in
+            start)
+                start_worker "$instance" "$worker_queue" || result=1
+                ;;
+            stop)
+                stop_worker "$instance" "$worker_queue" || result=1
+                ;;
+            restart)
+                stop_worker "$instance" "$worker_queue" || result=1
+                start_worker "$instance" "$worker_queue" || result=1
+                ;;
+            status)
+                name=$(worker_name "$instance" "$worker_queue")
+                pidfile="/var/run/koha/${instance}/${name}.pid"
+                worker=$(find_worker || true)
+                if [ -n "$worker" ] && worker_pid_is_live "$pidfile" "$worker" "$worker_queue"; then
+                    echo "[worker] running ${instance} (${worker_queue}) pid=$(cat "$pidfile")"
+                else
+                    [ "$quiet" = yes ] || echo "[worker] not running ${instance} (${worker_queue})"
+                    result=1
+                fi
+                ;;
+        esac
+    done
+done
+
+exit "$result"

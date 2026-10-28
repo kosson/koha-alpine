@@ -1,111 +1,76 @@
 #!/usr/bin/env bash
-# tests/test_run_sh_static.sh
-#
-# Static analysis tests for files-alpine/run.sh.
-# No Docker, no database, no network required.
-# Every assertion verifies that the fix for the "Database is not empty!" restart
-# bug (do_all_you_can_do.pl line 89) is correctly present in the source file.
-#
-# Exit code: 0 = all tests passed, 1 = at least one failure.
+# Static checks for the Alpine entrypoint's database bootstrap flow.
 
 set -euo pipefail
 
 RUN_SH="$(cd "$(dirname "$0")/.." && pwd)/files-alpine/run.sh"
 
-# ── tiny TAP-style helper ────────────────────────────────────────────────────
-PASS=0; FAIL=0; _N=0
+PASS=0
+FAIL=0
+_N=0
+
 ok() {
-    _N=$(( _N + 1 ))
+    _N=$((_N + 1))
     echo "ok ${_N} - $1"
-    PASS=$(( PASS + 1 ))
+    PASS=$((PASS + 1))
 }
+
 not_ok() {
-    _N=$(( _N + 1 ))
+    _N=$((_N + 1))
     echo "not ok ${_N} - $1"
-    FAIL=$(( FAIL + 1 ))
+    FAIL=$((FAIL + 1))
 }
+
 assert_contains() {
-    local desc="$1"; local pattern="$2"
+    local desc="$1"
+    local pattern="$2"
     if grep -qF -- "${pattern}" "${RUN_SH}"; then
         ok "${desc}"
     else
         not_ok "${desc} (pattern not found: ${pattern})"
     fi
 }
-assert_not_contains() {
-    local desc="$1"; local pattern="$2"
-    if ! grep -qF -- "${pattern}" "${RUN_SH}"; then
+
+assert_before() {
+    local desc="$1"
+    local before="$2"
+    local after="$3"
+    local before_line
+    local after_line
+
+    before_line="$(grep -nF -- "${before}" "${RUN_SH}" | head -1 | cut -d: -f1 || true)"
+    after_line="$(grep -nF -- "${after}" "${RUN_SH}" | head -1 | cut -d: -f1 || true)"
+    if [[ -n "${before_line}" && -n "${after_line}" ]] && (( before_line < after_line )); then
         ok "${desc}"
     else
-        not_ok "${desc} (unexpected pattern found: ${pattern})"
+        not_ok "${desc}"
     fi
 }
-# ─────────────────────────────────────────────────────────────────────────────
 
 echo "TAP version 14"
-echo "# Static checks on files-alpine/run.sh"
-echo "# Verifying the 'Database is not empty!' restart fix"
+echo "# Static checks for Alpine database bootstrap"
 echo ""
 
-# 1. The auto-detection block must exist
-assert_contains \
-    "run.sh contains DB auto-detection probe" \
-    "[db-detect] Probing"
+assert_contains "entrypoint retries database readiness" 'for i in $(seq 1 60); do'
+assert_contains "readiness probe runs an authenticated SQL query" 'mysql -h ${DB_HOST} -u ${DB_USER} -e "SELECT 1"'
+assert_contains "bootstrap detects a missing systempreferences table" 'SELECT 1 FROM systempreferences LIMIT 1'
+assert_contains "empty-database branch loads the Koha schema" '< "${KOHADEVBOX}/installer/data/mysql/kohastructure.sql"'
+assert_contains "empty-database branch loads mandatory SQL data" '${KOHADEVBOX}/installer/data/mysql/mandatory/*.sql'
+assert_contains "existing schema is upgraded with updatedatabase.pl" 'perl -Ilib installer/data/mysql/updatedatabase.pl'
+assert_contains "frontend asset pipeline propagates build failures" 'set -o pipefail'
+assert_contains "entrypoint builds missing frontend assets" 'yarn build 2>&1 | tail -40'
+assert_before "instance data directories are owned before admin creation" \
+    'chown -R kohadev-koha:kohadev-koha /etc/koha/sites/${KOHASITE}' \
+    'if [ -z "$ADMIN_EXISTS" ]; then'
+assert_contains "entrypoint fails explicitly when initial admin creation fails" \
+    'ERROR: create_superlibrarian.pl failed; refusing to start without the initial admin account'
+if grep -qF -- 'yarn build failed; OPAC/staff pages will render without CSS/JS' "${RUN_SH}"; then
+    not_ok "frontend asset build failures are not suppressed"
+else
+    ok "frontend asset build failures are not suppressed"
+fi
 
-# 2. The probe must query information_schema for the right tables
-assert_contains \
-    "probe checks systempreferences table" \
-    "systempreferences"
-
-assert_contains \
-    "probe queries information_schema.tables" \
-    "information_schema.tables"
-
-# 3. The probe must use the correct credentials variables
-assert_contains \
-    "probe uses koha-common defaults file" \
-    '--defaults-file=/etc/mysql/koha-common.cnf'
-
-assert_contains \
-    "probe sends the database name" \
-    "DB_NAME"
-
-# 4. On a positive probe result, USE_EXISTING_DB must be set to yes
-assert_contains \
-    "positive probe sets USE_EXISTING_DB=yes" \
-    'USE_EXISTING_DB="yes"'
-
-# 5. The old unconditional check must be replaced by (or preceded by) the probe
-assert_contains \
-    'USE_EXISTING_DB_FLAG is still set when USE_EXISTING_DB=yes' \
-    'USE_EXISTING_DB_FLAG="--use-existing-db"'
-
-# 6. do_all_you_can_do.pl must still receive the flag variable (not a hard-coded flag)
-assert_contains \
-    "do_all_you_can_do.pl receives USE_EXISTING_DB_FLAG" \
-    '${USE_EXISTING_DB_FLAG}'
-
-# 7. The probe must be guarded so it is skipped when USE_EXISTING_DB is already yes
-assert_contains \
-    'probe is skipped when USE_EXISTING_DB already equals yes' \
-    '[ "${USE_EXISTING_DB}" != "yes" ]'
-
-# 8. Temporary variable is cleaned up
-assert_contains \
-    "temporary _db_populated variable is unset" \
-    "unset _db_populated"
-
-# 9. Informational messages help operators understand what is happening
-assert_contains \
-    "log message on existing-data detection" \
-    "Existing Koha data found"
-
-assert_contains \
-    "log message on empty database" \
-    "Database is empty"
-
-# ── summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "1..${_N}"
 echo "# Passed: ${PASS}  Failed: ${FAIL}"
-[[ ${FAIL} -eq 0 ]] && exit 0 || exit 1
+[[ ${FAIL} -eq 0 ]]

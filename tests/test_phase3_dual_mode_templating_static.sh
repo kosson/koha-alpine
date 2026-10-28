@@ -87,7 +87,7 @@ assert_contains "koha-conf-site.xml.in uses KOHA_LIB_PATH variable" '${KOHA_LIB_
 
 # --- Dockerfile: no live gitify clone ---
 assert_not_contains "Dockerfile has no koha-gitify git clone" "koha-gitify.git" "${DOCKERFILE}"
-assert_contains "Dockerfile has no-op gitify stub" "koha-gitify eliminated" "${DOCKERFILE}"
+assert_not_contains "Dockerfile has no koha-gitify runtime shim" "koha-gitify" "${DOCKERFILE}"
 
 # --- cp_alpine_files.pl: no gitify references ---
 assert_not_contains "cp_alpine_files.pl has no gitify_dir argument" "gitify_dir" "${CP_ALPINE}"

@@ -67,8 +67,13 @@ assert_file_not_contains "koha-plack avoids runtime a2enmod execution" '\ba2enmo
 assert_file_contains "koha-plack implements Alpine process fallback" 'kill -0' "$SCRIPT_FILE"
 assert_file_contains "koha-plack includes enable action" '--enable' "$SCRIPT_FILE"
 assert_file_contains "koha-plack includes start action" '--start' "$SCRIPT_FILE"
+if "$SCRIPT_FILE" --help >/dev/null 2>&1; then
+    ok "koha-plack --help exits successfully without setup"
+else
+    not_ok "koha-plack --help exits successfully without setup"
+fi
 
-assert_file_contains "Dockerfile installs Alpine koha-plack override" 'install -m 0755 /kohadevbox/files-alpine/scripts/koha-plack /usr/sbin/koha-plack' "$DOCKERFILE"
+assert_file_contains "Dockerfile installs Alpine command overrides after asset staging" 'for script in koha-create koha-plack koha-worker koha-functions\.sh' "$DOCKERFILE"
 
 runtime_available=0
 if docker image inspect "$KOHA_IMAGE" >/dev/null 2>&1; then

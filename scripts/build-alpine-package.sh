@@ -22,6 +22,9 @@ unless ( -f $install_manifest ) {
 
 say "[build-alpine-package] Staging Koha assets from $koha_dir into Alpine system directories...";
 
+# The Debian install manifest treats these htdocs destinations as directories.
+make_path('/usr/share/koha/intranet/htdocs', '/usr/share/koha/opac/htdocs');
+
 # 1. Parse debian/koha-common.install manifest
 open my $fh, '<', $install_manifest or die "Cannot open $install_manifest: $!\n";
 

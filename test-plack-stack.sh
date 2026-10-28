@@ -53,7 +53,8 @@ if [ "$DO_RECREATE" = "yes" ]; then
     sleep 25
 fi
 
-LIVE_ENTRYPOINT=$(docker inspect koha-alpine --format '{{json .Config.Entrypoint}}' 2>/dev/null || echo "")
+LIVE_CONTAINER=$(compose ps -q koha 2>/dev/null | head -1)
+LIVE_ENTRYPOINT=$(docker inspect "$LIVE_CONTAINER" --format '{{json .Config.Entrypoint}}' 2>/dev/null || echo "")
 if echo "$LIVE_ENTRYPOINT" | grep -q "run.sh"; then
     pass "Container Entrypoint references run.sh ($LIVE_ENTRYPOINT)"
 else

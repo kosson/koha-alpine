@@ -5,7 +5,7 @@
 #   1. Static analysis  (no Docker needed)
 #   2. Unit tests       (no Docker needed)
 #   3. Phase 4 rewrite guardrails (runtime checks may skip when image is absent)
-#   4. Safe integration tests (require Docker; destructive DB race test is excluded)
+#   4. Optional runtime integrations (only enabled with an explicit isolated project/env)
 #
 # Usage:
 #   cd koha-alpine
@@ -29,6 +29,7 @@ SUITES=(
     "${TESTS_DIR}/test_dockerfile_perl_deps_static.sh"
     "${TESTS_DIR}/test_phase2_build_staging_static.sh"
     "${TESTS_DIR}/test_phase3_dual_mode_templating_static.sh"
+    "${TESTS_DIR}/test_alpine_compose_isolation.sh"
     "${TESTS_DIR}/test_stack_sh_static.sh"
     "${TESTS_DIR}/test_run_sh_static.sh"
     "${TESTS_DIR}/test_db_detection_unit.sh"
@@ -44,6 +45,7 @@ SUITE_LABELS=(
     "Static analysis         (Dockerfile Perl deps)"
     "Static analysis         (Phase 2 build-time staging)"
     "Static analysis         (Phase 3 dual-mode templating)"
+    "Compose validation      (isolated Alpine test project)"
     "Static analysis         (stack-alpine backup/restore)"
     "Static analysis         (files-alpine/run.sh)"
     "Unit tests              (mock mysql)"

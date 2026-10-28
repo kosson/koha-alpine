@@ -5,7 +5,7 @@
 # persistent database does NOT fail with "Database is not empty!".
 #
 # Prerequisites
-#   - A running stack (./stack-alpine.sh start or docker compose up -d has been run)
+#   - An explicitly selected, isolated, running test project
 #   - The koha-db-data volume must be populated (i.e. Koha has been set up)
 #   - Docker must be accessible from the current user
 #
@@ -13,17 +13,19 @@
 #   1. Confirms the stack is healthy before the test.
 #   2. Stops the Koha container (DB + Memcached stay up).
 #   3. Restarts the Koha container via docker compose up --force-recreate.
-#   4. Waits up to MAX_WAIT seconds for "koha-testing-docker has started up".
+#   4. Waits up to MAX_WAIT seconds for the Alpine startup-complete log.
 #   5. Checks the container did not exit with code 255 ("Database is not empty!").
 #
-# Exit code: 0 = test passed, 1 = test failed, 2 = prerequisite not met.
+# Exit code: 0 = pass/skip, 1 = fail, 2 = invalid explicitly selected prerequisites.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 COMPOSE_FILE="${REPO_ROOT}/docker-compose-alpinekoha.yml"
-ENV_FILE="${REPO_ROOT}/env/.env"
+ENV_FILE="${KOHA_TEST_ENV_FILE:-}"
+TEST_PROJECT="${KOHA_TEST_PROJECT:-}"
+COMPOSE_OVERRIDE="${KOHA_TEST_COMPOSE_OVERRIDE:-}"
 MAX_WAIT=${MAX_WAIT:-300}   # seconds to wait for Koha to finish re-initialising
 
 # ── tiny TAP helper ──────────────────────────────────────────────────────────
@@ -34,11 +36,11 @@ skip()   { _N=$(( _N + 1 )); echo "ok ${_N} - $1 # SKIP $2"; }
 # ─────────────────────────────────────────────────────────────────────────────
 
 compose() {
-    docker compose \
-        -f "${COMPOSE_FILE}" \
-        --env-file "${ENV_FILE}" \
-        --project-directory "${REPO_ROOT}" \
-        "$@"
+    local -a command=(docker compose --project-name "${TEST_PROJECT}" --env-file "${ENV_FILE}" --project-directory "${REPO_ROOT}" -f "${COMPOSE_FILE}")
+    if [[ -n "${COMPOSE_OVERRIDE}" ]]; then
+        command+=(-f "${COMPOSE_OVERRIDE}")
+    fi
+    "${command[@]}" "$@"
 }
 
 echo "TAP version 14"
@@ -47,25 +49,52 @@ echo ""
 
 # ── Prerequisite: Docker available ──────────────────────────────────────────
 if ! command -v docker >/dev/null 2>&1; then
-    echo "Bail out! docker not found — cannot run integration tests"
+    skip "restart integration prerequisites" "docker not found"
+    skip "Koha container restart succeeds" "docker not found"
+    skip "Container does not exit with code 255" "docker not found"
+    echo "1..${_N}"
+    exit 0
+fi
+
+# ── Prerequisite: explicit isolated test project ────────────────────────────
+if [[ -z "${TEST_PROJECT}" || -z "${ENV_FILE}" ]]; then
+    skip "restart integration prerequisites" "set KOHA_TEST_PROJECT and KOHA_TEST_ENV_FILE for an isolated running stack"
+    skip "Koha container restart succeeds" "no isolated test project selected"
+    skip "Container does not exit with code 255" "no isolated test project selected"
+    echo "1..${_N}"
+    exit 0
+fi
+
+if [[ ! "${TEST_PROJECT}" =~ ^koha-alpine-test-[A-Za-z0-9][A-Za-z0-9_-]*$ ]]; then
+    echo "Bail out! KOHA_TEST_PROJECT must use the unique koha-alpine-test-<suffix> prefix"
     exit 2
 fi
 
-# ── Prerequisite: compose file exists ───────────────────────────────────────
-if [[ ! -f "${COMPOSE_FILE}" ]]; then
-    echo "Bail out! docker-compose.yml not found at ${COMPOSE_FILE}"
+# ── Prerequisite: selected Compose configuration ────────────────────────────
+if [[ ! -f "${COMPOSE_FILE}" || ! -f "${ENV_FILE}" ]]; then
+    echo "Bail out! compose or selected test env file not found"
     exit 2
 fi
 
-# ── Prerequisite: env file exists ───────────────────────────────────────────
-if [[ ! -f "${ENV_FILE}" ]]; then
-    echo "Bail out! env/.env not found at ${ENV_FILE}"
+export KOHA_CONTAINER_ENV_FILE="${ENV_FILE}"
+if ! compose config --quiet >/dev/null 2>&1; then
+    echo "Bail out! selected test Compose configuration is invalid"
+    exit 2
+fi
+
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "Bail out! python3 is required to verify the selected DB volume"
+    exit 2
+fi
+DB_VOLUME="$(compose config --format json | python3 -c 'import json, sys; print(json.load(sys.stdin)["volumes"]["koha-db-data"]["name"])')"
+if [[ "${DB_VOLUME}" != "${TEST_PROJECT}_"* ]]; then
+    echo "Bail out! DB volume is not scoped to the isolated project: ${DB_VOLUME}"
     exit 2
 fi
 
 # ── Prerequisite: DB container running ───────────────────────────────────────
 if ! compose ps --status running db 2>/dev/null | grep -q "running\|Up"; then
-    skip "DB container is running" "stack is not started — run ./stack-alpine.sh start first"
+    skip "DB container is running" "project ${TEST_PROJECT} is not started"
     skip "Koha container restart succeeds" "stack is not started"
     skip "Container does not exit with code 255" "stack is not started"
     echo ""
@@ -75,16 +104,26 @@ if ! compose ps --status running db 2>/dev/null | grep -q "running\|Up"; then
 fi
 ok "DB container is running"
 
+if ! compose ps --status running koha 2>/dev/null | grep -q "running\|Up"; then
+    skip "Koha container restart succeeds" "Koha service is not running in project ${TEST_PROJECT}"
+    skip "Container does not exit with code 255" "Koha service is not running"
+    echo "1..${_N}"
+    exit 0
+fi
+
 # ── Prerequisite: Koha DB has existing data ──────────────────────────────────
 KOHA_INSTANCE=$(grep -E '^KOHA_INSTANCE=' "${ENV_FILE}" | head -1 | cut -d= -f2- | tr -d '"'"'" || echo "kohadev")
 DB_NAME="koha_${KOHA_INSTANCE}"
-DB_CONTAINER="$(basename "${REPO_ROOT}")-db-1"
+DB_CONTAINER="$(compose ps -q db)"
 
 DB_ROOT_PASS="$(grep -E '^KOHA_DB_ROOT_PASSWORD=' "${ENV_FILE}" | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'" || true)"
-DB_ROOT_PASS="${DB_ROOT_PASS:-password}"
+if [[ -z "${DB_ROOT_PASS}" ]]; then
+    echo "Bail out! KOHA_DB_ROOT_PASSWORD is empty in selected test env file"
+    exit 2
+fi
 
-tables=$(docker exec "${DB_CONTAINER}" \
-    mysql -uroot -p"${DB_ROOT_PASS}" "${DB_NAME}" \
+tables=$(docker exec -e "MYSQL_PWD=${DB_ROOT_PASS}" "${DB_CONTAINER}" \
+    mysql -uroot "${DB_NAME}" \
     -sse "SELECT COUNT(*) FROM information_schema.tables
           WHERE table_schema='${DB_NAME}'
           AND table_name='systempreferences';" 2>/dev/null || echo 0)
@@ -119,8 +158,9 @@ while (( elapsed < MAX_WAIT )); do
     elapsed=$(( elapsed + 5 ))
 
     # Check whether the container exited (code 255 = "Database is not empty!")
-    state=$(docker inspect --format '{{.State.Status}}' "$(basename "${REPO_ROOT}")-koha-1" 2>/dev/null || echo "unknown")
-    exit_code=$(docker inspect --format '{{.State.ExitCode}}' "$(basename "${REPO_ROOT}")-koha-1" 2>/dev/null || echo -1)
+    KOHA_CONTAINER="$(compose ps -q koha 2>/dev/null || true)"
+    state=$(docker inspect --format '{{.State.Status}}' "${KOHA_CONTAINER}" 2>/dev/null || echo "unknown")
+    exit_code=$(docker inspect --format '{{.State.ExitCode}}' "${KOHA_CONTAINER}" 2>/dev/null || echo -1)
 
     if [[ "${state}" == "exited" && "${exit_code}" == "255" ]]; then
         error_255=true
@@ -128,7 +168,7 @@ while (( elapsed < MAX_WAIT )); do
     fi
 
     # Check logs for the success banner
-    if compose logs --tail=50 koha 2>/dev/null | grep -q "koha-testing-docker has started up"; then
+    if compose logs --tail=50 koha 2>/dev/null | grep -q "Startup complete - OPAC on"; then
         startup_ok=true
         break
     fi
@@ -158,9 +198,7 @@ fi
 
 # ── Cleanup note ─────────────────────────────────────────────────────────────
 echo ""
-echo "# NOTE: the stack was restarted but NOT reset."
-echo "# Run './stack-alpine.sh start' to get a fresh database, or"
-echo "# './stack-alpine.sh start --no-fresh-db' to keep the current data."
+echo "# NOTE: only the selected isolated project's Koha service was restarted; its database volume was not removed."
 
 # ── Summary ──────────────────────────────────────────────────────────────────
 echo ""

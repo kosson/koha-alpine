@@ -12,6 +12,19 @@
 # included from the rendered vhost) over a unix socket — matching upstream Koha's
 # actual production architecture.
 set -e
+GIT_INSTALL="${GIT_INSTALL:-}"
+
+if [ -r /usr/sbin/koha-functions.sh ]; then
+  . /usr/sbin/koha-functions.sh
+elif [ -r /usr/share/koha/bin/koha-functions.sh ]; then
+  . /usr/share/koha/bin/koha-functions.sh
+fi
+
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+  echo "Usage: $0 --enable|--disable|--start|--stop|--restart|--status [instance]"
+  exit 0
+fi
+
 INSTANCE="${2:-${1:-kohadev}}"
 if [ "$1" = "--enable" ] || [ "$1" = "--disable" ]; then INSTANCE="${2:-kohadev}"; fi
 if [ "$1" = "--start" ] || [ "$1" = "--stop" ] || [ "$1" = "--restart" ] || [ "$1" = "--status" ]; then INSTANCE="${2:-kohadev}"; fi

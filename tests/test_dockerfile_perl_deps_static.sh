@@ -32,7 +32,14 @@ echo "# Static checks on Dockerfile-Alpine Perl dependencies"
 echo ""
 
 assert_contains "Dockerfile installs CGI::Session package" "perl-cgi-session"
-assert_contains "Dockerfile installs Crypt::SysRandom from CPAN" "cpanm --notest Crypt::SysRandom"
+assert_contains "Dockerfile installs Crypt::SysRandom into the runtime Perl library" "cpanm --notest --local-lib=/opt/koha-perl Crypt::SysRandom"
+assert_contains "Dockerfile supplies the native fribidi headers needed by Text::Bidi" "fribidi-dev"
+assert_contains "Dockerfile does not hide Koha CPAN dependency installation failures" "cpanm --notest --local-lib=/opt/koha-perl --installdeps .;"
+if grep -qF -- "--installdeps . || true" "${DOCKERFILE}"; then
+    not_ok "Koha CPAN dependency failures are not suppressed"
+else
+    ok "Koha CPAN dependency failures are not suppressed"
+fi
 
 echo ""
 echo "1..${_N}"

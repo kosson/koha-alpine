@@ -39,6 +39,55 @@ That means the first aim of each session is discovery, not completion.
 
 Use this same flow in every Alpine session.
 
+### Isolate test state first
+
+Use a unique Compose project name for each test run. Compose scopes the named
+MariaDB and RabbitMQ volumes to that project; the Alpine stack does not assign
+fixed container names. Do not use `down -v` when you only intend to stop a
+test stack.
+
+When the repository's default `env/.env` cannot be used, supply a separate,
+valid test env file for both Compose interpolation and the Koha container:
+
+```bash
+TEST_PROJECT="koha-alpine-eval-$(date +%Y%m%d%H%M%S)"
+TEST_ENV_FILE="/path/to/valid/test.env"
+KOHA_CONTAINER_ENV_FILE="${TEST_ENV_FILE}" \
+  docker compose \
+    --project-name "${TEST_PROJECT}" \
+    --env-file "${TEST_ENV_FILE}" \
+    -f docker-compose-alpinekoha.yml \
+    config
+```
+
+Confirm the rendered `koha-db-data` and `koha-rabbitmq-data` volume names begin
+with `${TEST_PROJECT}_` before starting services. The default env-file path
+remains `env/.env`; the override does not modify that file.
+
+Runtime integration tests are opt-in and only inspect an already-running
+project. They never start services or create volumes. To run them, export the
+same isolated project and test env file; if a Compose override is needed, set
+its path as well:
+
+```bash
+export KOHA_TEST_PROJECT="${TEST_PROJECT}"
+export KOHA_TEST_ENV_FILE="${TEST_ENV_FILE}"
+export KOHA_TEST_COMPOSE_OVERRIDE="/path/to/isolated-compose-override.yml"
+bash tests/test_authority_groupby_sqlmode_integration.sh
+bash tests/test_alpine_startup_smoke.sh
+```
+
+Omit `KOHA_TEST_COMPOSE_OVERRIDE` when the base Compose file is sufficient.
+Without an explicit project and env file, or when the selected Koha service is
+not already running, these checks report a TAP skip rather than touching the
+default Compose project.
+
+The deterministic integration runner and fresh-volume MariaDB readiness test
+are more invasive: they require a new project named
+`koha-alpine-test-<unique-suffix>`, verify that the generated DB volume is
+project-scoped and absent, and do not remove volumes. The runner must not be
+pointed at an existing or production project.
+
 ### 1) Prepare the workspace
 
 Confirm which files changed since the last session:
@@ -60,7 +109,10 @@ If the working tree contains unrelated changes, ignore them unless they block th
 Run the Alpine compose file explicitly:
 
 ```bash
-docker compose -f docker-compose-alpinekoha.yml build koha
+KOHA_CONTAINER_ENV_FILE="${TEST_ENV_FILE}" \
+  docker compose --project-name "${TEST_PROJECT}" \
+    --env-file "${TEST_ENV_FILE}" \
+    -f docker-compose-alpinekoha.yml build koha
 ```
 
 If Docker Compose is not suitable for a narrow check, build the image directly:
@@ -80,13 +132,19 @@ Record:
 Bring up the Alpine test ground with the same compose file:
 
 ```bash
-docker compose -f docker-compose-alpinekoha.yml up -d db rabbitmq memcached
+KOHA_CONTAINER_ENV_FILE="${TEST_ENV_FILE}" \
+  docker compose --project-name "${TEST_PROJECT}" \
+    --env-file "${TEST_ENV_FILE}" \
+    -f docker-compose-alpinekoha.yml up -d db rabbitmq memcached
 ```
 
 Then start `koha` separately so its logs are isolated:
 
 ```bash
-docker compose -f docker-compose-alpinekoha.yml up koha
+KOHA_CONTAINER_ENV_FILE="${TEST_ENV_FILE}" \
+  docker compose --project-name "${TEST_PROJECT}" \
+    --env-file "${TEST_ENV_FILE}" \
+    -f docker-compose-alpinekoha.yml up koha
 ```
 
 Record:
@@ -102,11 +160,11 @@ The first checks should be cheap and local.
 
 Suggested order:
 
-1. `docker compose -f docker-compose-alpinekoha.yml config`
-2. `docker compose -f docker-compose-alpinekoha.yml build koha`
-3. `docker compose -f docker-compose-alpinekoha.yml up -d db rabbitmq memcached`
-4. `docker compose -f docker-compose-alpinekoha.yml logs --no-color koha`
-5. `docker compose -f docker-compose-alpinekoha.yml exec koha /bin/bash -lc 'command -v koha-create && command -v koha-shell && command -v koha-enable'`
+1. Render Compose config and verify project-scoped volume names.
+2. Build the `dev-runtime` image.
+3. Start only the supporting services, then Koha.
+4. Read `koha` logs and check its runtime commands.
+5. Keep using the same project name for the test; use a different name for the next isolated run.
 
 If the build is failing, stop there and fix the build before chasing runtime behavior.
 

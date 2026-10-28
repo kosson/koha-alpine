@@ -67,7 +67,7 @@ assert_file_contains "koha-functions override has worker running check" '^is_wor
 assert_file_contains "koha-functions override has plack running check" '^is_plack_running\(\)' "$SCRIPT_FILE"
 assert_file_contains "koha-functions override has z3950 running check" '^is_z3950_running\(\)' "$SCRIPT_FILE"
 
-assert_file_contains "Dockerfile installs Alpine koha-functions override" 'install -m 0755 /kohadevbox/files-alpine/scripts/koha-functions\.sh /usr/sbin/koha-functions\.sh' "$DOCKERFILE"
+assert_file_contains "Dockerfile installs Alpine command overrides after asset staging" 'for script in koha-create koha-plack koha-worker koha-functions\.sh' "$DOCKERFILE"
 assert_file_contains "koha-create sources Alpine koha-functions first" '/usr/sbin/koha-functions.sh' "$KOHA_CREATE_SCRIPT"
 assert_file_contains "koha-plack sources Alpine koha-functions first" '/usr/sbin/koha-functions.sh' "$KOHA_PLACK_SCRIPT"
 assert_file_contains "koha-worker sources Alpine koha-functions first" '/usr/sbin/koha-functions.sh' "$KOHA_WORKER_SCRIPT"
