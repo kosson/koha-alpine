@@ -62,6 +62,12 @@ assert_contains "bootstrap checks systempreferences table metadata" "SELECT COUN
 assert_contains "database schema inspection failures stop startup" "ERROR: unable to inspect the Koha schema state"
 assert_contains "empty-database branch loads the Koha schema" '< "${KOHADEVBOX}/installer/data/mysql/kohastructure.sql"'
 assert_contains "empty-database branch loads mandatory SQL data" '${KOHADEVBOX}/installer/data/mysql/mandatory/*.sql'
+assert_contains "empty-database branch loads the mandatory MARC framework data" 'installer/data/mysql/en/marcflavour/${MARC_FLAVOUR_DIR}/mandatory'
+assert_contains "MARC framework load failure stops startup" 'ERROR: failed to load MARC framework data'
+assert_contains "empty-database branch sets the marcflavour preference" "VALUES ('marcflavour','\${MARC_FLAVOUR_PREF}')"
+assert_before "MARC framework data is loaded inside the empty-database branch before admin creation" \
+    'mandatory MARC framework data' \
+    'Ensuring base data'
 assert_contains "existing schema is upgraded with updatedatabase.pl" 'perl -Ilib installer/data/mysql/updatedatabase.pl'
 assert_contains "Koha config uses configured RabbitMQ username" 's|__MESSAGE_BROKER_USER__|$MESSAGE_BROKER_USER_ESC|g'
 assert_contains "Koha config uses configured RabbitMQ password" 's|__MESSAGE_BROKER_PASS__|$MESSAGE_BROKER_PASS_ESC|g'

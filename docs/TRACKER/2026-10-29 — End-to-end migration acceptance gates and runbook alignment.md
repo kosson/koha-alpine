@@ -249,3 +249,19 @@ remote change was performed. The current tree is clean of credential literals
 (value-safe scan) and covered by `tests/test_credential_hygiene_static.sh`.
 G0 is PASS with this owner-accepted residual risk; revisit if exposure or
 rotation status changes. G2–G9 remain open.
+
+## G3 addendum — feature acceptance on a fresh isolated stack (PARTIAL)
+
+Evidence from a disposable production-mode project (own volumes, no OpenSearch, removed afterwards):
+
+- PASS: staff login, CSRF, OPAC, authenticated REST, create/edit biblio, create item, create patron, lookup, checkout, checkin, jobs endpoint (13/15 checks).
+- FAIL (open): OPAC and staff catalogue search. Default `SearchEngine=Zebra` and the Alpine image has no `zebraidx`/`zebrasrv`; search requires OpenSearch/Elasticsearch, which was not part of this run.
+
+Defects found and fixed in `files-alpine/run.sh` (empty-database bootstrap only; existing databases untouched):
+
+1. MARC framework and authority YAML (`installer/data/mysql/en/marcflavour/<flavour>/mandatory`) were never loaded, so records could not be created.
+2. The `marcflavour` system preference was never set, so `PUT /biblios/{id}` failed with `biblio_metadata_uniq_key` duplicate (HTTP 500).
+
+Documented, not changed: the entrypoint hard-defaults instance `kohadev` (other `KOHA_INSTANCE` values break DB user matching); item types, circulation rules and libraries come from optional sample data and must be configured by the operator (test setup inserted baseline circulation rules).
+
+Remaining for G3: search proof against a disposable OpenSearch, background-job proof through the RabbitMQ worker.

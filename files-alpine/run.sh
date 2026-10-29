@@ -176,6 +176,18 @@ if [ "${SYSTEMPREFERENCES_TABLE}" = "0" ]; then
         mysql -h ${DB_HOST} -u ${DB_USER} ${DB_NAME} < "$f"
     done
     mysql -h ${DB_HOST} -u ${DB_USER} ${DB_NAME} -e "INSERT INTO systempreferences (variable,value) VALUES ('Version','24.11.00.000') ON DUPLICATE KEY UPDATE value='24.11.00.000';"
+
+    # The web installer normally loads the MARC bibliographic framework and
+    # authority types; without them records cannot be created. Only done for a
+    # brand-new database so migrated/existing data is never modified.
+    MARC_FLAVOUR_DIR=$(printf '%s' "${KOHA_MARC_FLAVOUR:-marc21}" | tr 'A-Z' 'a-z')
+    echo "[run.sh] Loading ${MARC_FLAVOUR_DIR} mandatory MARC framework data..."
+    if ! su kohadev-koha -s /bin/sh -c "export KOHA_CONF=${KOHACONF} PERL5LIB=/opt/koha-perl/lib/perl5:${KOHADEVBOX}/lib:${KOHADEVBOX} KOHA_HOME=${KOHA_HOME}; cd ${KOHADEVBOX}; perl -MC4::Installer -MC4::Context -e 'my \$i = C4::Installer->new; my \$d = \"${KOHADEVBOX}/installer/data/mysql/en/marcflavour/${MARC_FLAVOUR_DIR}/mandatory\"; my @f = sort glob(\"\$d/*.yml\"); die \"no MARC framework files in \$d\\n\" unless @f; for my \$f (@f) { my \$e = \$i->load_sql(\$f); die \"failed loading \$f: \$e\\n\" if \$e; print \"  - Loaded \$f\\n\"; }'"; then
+        echo "[run.sh] ERROR: failed to load MARC framework data" >&2
+        exit 1
+    fi
+    MARC_FLAVOUR_PREF=$(printf '%s' "${MARC_FLAVOUR_DIR}" | tr 'a-z' 'A-Z')
+    mysql -h ${DB_HOST} -u ${DB_USER} ${DB_NAME} -e "INSERT INTO systempreferences (variable,value) VALUES ('marcflavour','${MARC_FLAVOUR_PREF}') ON DUPLICATE KEY UPDATE value='${MARC_FLAVOUR_PREF}';"
 fi
 
 echo "[run.sh] Ensuring base data"
