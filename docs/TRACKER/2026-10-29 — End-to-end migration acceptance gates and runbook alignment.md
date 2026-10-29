@@ -265,3 +265,18 @@ Defects found and fixed in `files-alpine/run.sh` (empty-database bootstrap only;
 Documented, not changed: the entrypoint hard-defaults instance `kohadev` (other `KOHA_INSTANCE` values break DB user matching); item types, circulation rules and libraries come from optional sample data and must be configured by the operator (test setup inserted baseline circulation rules).
 
 Remaining for G3: search proof against a disposable OpenSearch, background-job proof through the RabbitMQ worker.
+
+## G3 addendum 2 — search and background jobs with OpenSearch (15/15 workflow checks)
+
+Re-run on a new disposable project (own volumes, `kohadev` instance, random credentials in a private temp dir, single-node `kosson/opensearch-icu:3.6.0` with the security plugin disabled, plain HTTP). Result: login, CSRF, OPAC, REST, biblio create/edit, item, patron, lookup, checkout, checkin (verified by empty checkout list), background job processed by a worker, OPAC search and staff search all PASS.
+
+Further defects found and fixed:
+
+1. `run.sh` hard-coded `localhost:9200` and ignored `ELASTIC_SERVER` / `ELASTIC_OPTIONS`; both are now written into the `<elasticsearch>` block (options injected after `<index_name>`, special characters preserved).
+2. `SearchEngine` stayed `Zebra` on a new database; with `KOHA_ELASTICSEARCH=yes` the empty-database bootstrap now sets `Elasticsearch`. Existing databases are not changed.
+3. `rebuild_elasticsearch.pl -r` failed because `/usr/share/koha/intranet/cgi-bin/admin` did not exist; `run.sh` now links it to the Koha tree.
+4. The `elastic_index` queue had no consumer: index jobs stayed `new`. `koha-worker --queue elastic_index` now runs `misc/workers/es_indexer_daemon.pl` (upstream's consumer; the generic worker consumed the broker messages without processing them). `run-sh-alpine.sh` starts it when `KOHA_ELASTICSEARCH=yes` and the watchdog supervises and stops it.
+
+Notes: OPAC search redirects to the record page on a single hit (not a failure). Missing sample data (classification sort sources) causes harmless warnings.
+
+Still open for G3: OpenSearch with TLS and authentication (the production-style path through `stack-alpine.sh`), and MARC import if required. Test suite: 289 passed, 0 failed, 29 expected skips.

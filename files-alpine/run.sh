@@ -38,6 +38,9 @@ ls -l $KOHADEVBOX/app.psgi 2>&1 | head -1 || true
 mkdir -p /usr/share/koha/intranet/cgi-bin /usr/share/koha/intranet/htdocs /usr/share/koha/opac/htdocs
 rm -rf /usr/share/koha/intranet/cgi-bin/installer
 ln -sf ${KOHADEVBOX}/installer /usr/share/koha/intranet/cgi-bin/installer || true
+# Elasticsearch/OpenSearch mapping and field config are read from the intranet cgi-bin tree.
+rm -rf /usr/share/koha/intranet/cgi-bin/admin
+ln -sfn ${KOHADEVBOX}/admin /usr/share/koha/intranet/cgi-bin/admin || true
 rm -rf /usr/share/koha/intranet/htdocs/intranet-tmpl
 rm -rf /usr/share/koha/opac/htdocs/opac-tmpl
 # Symlink the WHOLE intranet-tmpl/opac-tmpl trees (not just prog/bootstrap
@@ -95,6 +98,7 @@ DB_PASS_ESC=$(printf '%s' "$DB_PASS" | sed 's/[&/\]/\\&/g')
 MESSAGE_BROKER_USER_ESC=$(printf '%s' "$MESSAGE_BROKER_USER" | sed 's/[\\&|]/\\&/g')
 MESSAGE_BROKER_PASS_ESC=$(printf '%s' "$MESSAGE_BROKER_PASS" | sed 's/[\\&|]/\\&/g')
 MESSAGE_BROKER_VHOST_ESC=$(printf '%s' "$MESSAGE_BROKER_VHOST" | sed 's/[\\&|]/\\&/g')
+ELASTIC_SERVER_ESC=$(printf '%s' "${ELASTIC_SERVER:-localhost:9200}" | sed 's/[\\&|]/\\&/g')
 cp "$TEMPLATE" "${KOHACONF}.tmp"
 sed -i \
     -e "s|__KOHASITE__|$KOHASITE|g" \
@@ -115,7 +119,7 @@ sed -i \
     -e "s|__START_SRU_PUBLICSERVER__|<!--|g" \
     -e "s|__END_SRU_PUBLICSERVER__|-->|g" \
     -e "s|__TIMEZONE__|Europe/Bucharest|g" \
-    -e "s|__ELASTICSEARCH_SERVER__|localhost:9200|g" \
+    -e "s|__ELASTICSEARCH_SERVER__|$ELASTIC_SERVER_ESC|g" \
     -e "s|__TEMPLATE_CACHE_DIR__|/var/cache/koha/$KOHASITE/templates|g" \
     -e "s|__PLUGINS_DIR__|/var/lib/koha/$KOHASITE/plugins|g" \
     -e "s|__UPLOAD_PATH__|/var/lib/koha/$KOHASITE/uploads|g" \
@@ -138,6 +142,10 @@ sed -i \
     -e "s|__SMTP_PORT__|25|g" \
     -e "s|__SMTP.*__||g" \
     "${KOHACONF}.tmp"
+# Optional XML (userinfo, ssl_options, ...) for the <elasticsearch> block.
+if [ -n "${ELASTIC_OPTIONS:-}" ]; then
+    ELASTIC_OPTIONS="${ELASTIC_OPTIONS}" perl -0pi -e 's{(<index_name>[^<]*</index_name>)}{$1\n$ENV{ELASTIC_OPTIONS}}' "${KOHACONF}.tmp"
+fi
 mv "${KOHACONF}.tmp" "${KOHACONF}"; chmod 644 "${KOHACONF}"
 cp /etc/koha/log4perl-site.conf.in /etc/koha/sites/${KOHASITE}/log4perl.conf 2>/dev/null || cp ${KOHADEVBOX}/debian/templates/log4perl-site.conf.in /etc/koha/sites/${KOHASITE}/log4perl.conf 2>/dev/null || true
 sed -i "s|__KOHASITE__|$KOHASITE|g; s|__LOG_DIR__|/var/log/koha/$KOHASITE|g" /etc/koha/sites/${KOHASITE}/log4perl.conf 2>/dev/null || true
@@ -185,6 +193,10 @@ if [ "${SYSTEMPREFERENCES_TABLE}" = "0" ]; then
     if ! su kohadev-koha -s /bin/sh -c "export KOHA_CONF=${KOHACONF} PERL5LIB=/opt/koha-perl/lib/perl5:${KOHADEVBOX}/lib:${KOHADEVBOX} KOHA_HOME=${KOHA_HOME}; cd ${KOHADEVBOX}; perl -MC4::Installer -MC4::Context -e 'my \$i = C4::Installer->new; my \$d = \"${KOHADEVBOX}/installer/data/mysql/en/marcflavour/${MARC_FLAVOUR_DIR}/mandatory\"; my @f = sort glob(\"\$d/*.yml\"); die \"no MARC framework files in \$d\\n\" unless @f; for my \$f (@f) { my \$e = \$i->load_sql(\$f); die \"failed loading \$f: \$e\\n\" if \$e; print \"  - Loaded \$f\\n\"; }'"; then
         echo "[run.sh] ERROR: failed to load MARC framework data" >&2
         exit 1
+    fi
+    if [ "${KOHA_ELASTICSEARCH:-no}" = "yes" ]; then
+        echo "[run.sh] Selecting Elasticsearch/OpenSearch as the search engine for the new database"
+        mysql -h ${DB_HOST} -u ${DB_USER} ${DB_NAME} -e "INSERT INTO systempreferences (variable,value) VALUES ('SearchEngine','Elasticsearch') ON DUPLICATE KEY UPDATE value='Elasticsearch';"
     fi
     MARC_FLAVOUR_PREF=$(printf '%s' "${MARC_FLAVOUR_DIR}" | tr 'a-z' 'A-Z')
     mysql -h ${DB_HOST} -u ${DB_USER} ${DB_NAME} -e "INSERT INTO systempreferences (variable,value) VALUES ('marcflavour','${MARC_FLAVOUR_PREF}') ON DUPLICATE KEY UPDATE value='${MARC_FLAVOUR_PREF}';"

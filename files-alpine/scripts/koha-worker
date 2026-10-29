@@ -97,6 +97,13 @@ valid_name() {
 }
 
 find_worker() {
+    # The elastic_index queue is consumed by the dedicated search indexer
+    # daemon, not by the generic background job worker.
+    if [ "${1:-}" = elastic_index ]; then
+        [ -f "$KOHA_PATH/misc/workers/es_indexer_daemon.pl" ] || return 1
+        printf '%s\n' "$KOHA_PATH/misc/workers/es_indexer_daemon.pl"
+        return 0
+    fi
     for candidate in \
         "$KOHA_PATH/misc/workers/background_jobs_worker.pl" \
         "$KOHA_PATH/workers/background_jobs_worker.pl" \
@@ -132,6 +139,14 @@ worker_pid_is_live() {
     kill -0 "$pid" 2>/dev/null || return 1
     [ -r "/proc/${pid}/cmdline" ] || return 1
     command_line=$(tr '\000' ' ' < "/proc/${pid}/cmdline")
+    case "$worker_queue" in
+        elastic_index)
+            case "$command_line" in
+                *"$worker"*) return 0 ;;
+                *) return 1 ;;
+            esac
+            ;;
+    esac
     case "$command_line" in
         *"$worker"*'--queue '"$worker_queue"*) return 0 ;;
         *) return 1 ;;
@@ -151,7 +166,7 @@ start_worker() {
     pidfile="/var/run/koha/${instance}/${name}.pid"
     mkdir -p "/var/run/koha/${instance}" "/var/log/koha/${instance}"
     user="${instance}-koha"
-    worker=$(find_worker) || {
+    worker=$(find_worker "$worker_queue") || {
         echo "[worker] background_jobs_worker.pl not found under ${KOHA_PATH}" >&2
         return 1
     }
@@ -168,6 +183,7 @@ start_worker() {
         export KOHA_CONF=$2 KOHA_HOME=$3 PERL5LIB=$4 GIT_INSTALL=1
         cd "$5"
         echo "$$" > "$pidfile"
+        if [ "$7" = elastic_index ]; then exec "$6"; fi
         exec "$6" --queue "$7"
     ' koha-worker "$pidfile" "$koha_conf" "$KOHA_HOME" "$PERL5LIB_PATH" "$KOHA_PATH" "$worker" "$worker_queue" \
         >> "/var/log/koha/${instance}/worker.log" 2>&1 &
@@ -192,7 +208,7 @@ stop_worker() {
 
     name=$(worker_name "$instance" "$worker_queue")
     pidfile="/var/run/koha/${instance}/${name}.pid"
-    worker=$(find_worker || true)
+    worker=$(find_worker "$worker_queue" || true)
     if [ -z "$worker" ] || ! worker_pid_is_live "$pidfile" "$worker" "$worker_queue"; then
         rm -f "$pidfile"
         [ "$quiet" = yes ] || echo "[worker] not running for ${instance} (${worker_queue})"
@@ -250,7 +266,7 @@ for instance in "$@"; do
             status)
                 name=$(worker_name "$instance" "$worker_queue")
                 pidfile="/var/run/koha/${instance}/${name}.pid"
-                worker=$(find_worker || true)
+                worker=$(find_worker "$worker_queue" || true)
                 if [ -n "$worker" ] && worker_pid_is_live "$pidfile" "$worker" "$worker_queue"; then
                     echo "[worker] running ${instance} (${worker_queue}) pid=$(cat "$pidfile")"
                 else

@@ -199,6 +199,16 @@ start_koha_service() {
         koha-plack --stop "${KOHA_INSTANCE}" || true
         return 1
     fi
+    # Search-index updates are queued on the elastic_index queue, which the
+    # default worker does not consume.
+    if [ "${KOHA_ELASTICSEARCH:-no}" = "yes" ]; then
+        if ! koha-worker --start --queue elastic_index "${KOHA_INSTANCE}"; then
+            echo "[service] ERROR: elastic_index worker failed to start" >&2
+            koha-worker --stop "${KOHA_INSTANCE}" || true
+            koha-plack --stop "${KOHA_INSTANCE}" || true
+            return 1
+        fi
+    fi
 }
 
 stop_apache_service() {
@@ -333,6 +343,7 @@ run_service_watchdog() {
     local interval="${2:-30}"
     local _plack_expected=no
     local _worker_expected=no
+    local _es_worker_expected=no
     local _watchdog_sleep_pid=0
 
     # Observe initial running state to determine what needs supervision.
@@ -341,15 +352,17 @@ run_service_watchdog() {
     fi
     if command -v koha-worker >/dev/null 2>&1; then
         koha-worker --status "${instance}" >/dev/null 2>&1 && _worker_expected=yes || true
+        koha-worker --status --queue elastic_index "${instance}" >/dev/null 2>&1 && _es_worker_expected=yes || true
     fi
 
-    echo "[watchdog] Service watchdog started (instance=${instance}, plack=${_plack_expected}, worker=${_worker_expected}, interval=${interval}s)"
+    echo "[watchdog] Service watchdog started (instance=${instance}, plack=${_plack_expected}, worker=${_worker_expected}, elastic_index_worker=${_es_worker_expected}, interval=${interval}s)"
 
     # On SIGTERM/SIGINT: stop supervised services cleanly then exit.
     trap 'echo "[watchdog] Shutdown signal received; stopping services...";
           kill ${_watchdog_sleep_pid} 2>/dev/null || true;
           command -v koha-plack  >/dev/null 2>&1 && koha-plack  --stop "'"${instance}"'" >/dev/null 2>&1 || true;
           command -v koha-worker >/dev/null 2>&1 && koha-worker --stop "'"${instance}"'" >/dev/null 2>&1 || true;
+          command -v koha-worker >/dev/null 2>&1 && koha-worker --stop --queue elastic_index "'"${instance}"'" >/dev/null 2>&1 || true;
           echo "[watchdog] Done.";
           exit 0' TERM INT
 
@@ -367,6 +380,14 @@ run_service_watchdog() {
                 echo "[watchdog] koha-worker is down; restarting..."
                 if ! koha-worker --start "${instance}"; then
                     echo "[watchdog] ERROR: koha-worker restart attempt failed" >&2
+                fi
+            }
+        fi
+        if [ "${_es_worker_expected}" = "yes" ]; then
+            koha-worker --status --queue elastic_index "${instance}" >/dev/null 2>&1 || {
+                echo "[watchdog] elastic_index worker is down; restarting..."
+                if ! koha-worker --start --queue elastic_index "${instance}"; then
+                    echo "[watchdog] ERROR: elastic_index worker restart attempt failed" >&2
                 fi
             }
         fi

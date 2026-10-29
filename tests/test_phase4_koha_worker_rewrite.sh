@@ -74,6 +74,12 @@ else
     not_ok "koha-worker --help exits successfully without setup"
 fi
 
+assert_file_contains "koha-worker runs the ES indexer daemon for the elastic_index queue" 'misc/workers/es_indexer_daemon\.pl' "$SCRIPT_FILE"
+assert_file_contains "Alpine service library starts the elastic_index worker when OpenSearch is enabled" 'koha-worker --start --queue elastic_index' "${ROOT_DIR}/files-alpine/lib/run-sh-alpine.sh"
+assert_file_contains "watchdog supervises the elastic_index worker" 'elastic_index worker is down' "${ROOT_DIR}/files-alpine/lib/run-sh-alpine.sh"
+assert_file_contains "run.sh substitutes ELASTIC_SERVER into koha-conf" 'ELASTIC_SERVER_ESC' "${ROOT_DIR}/files-alpine/run.sh"
+assert_file_contains "run.sh injects ELASTIC_OPTIONS into koha-conf" 'ELASTIC_OPTIONS' "${ROOT_DIR}/files-alpine/run.sh"
+assert_file_contains "run.sh links admin/searchengine mappings into the intranet cgi-bin tree" 'cgi-bin/admin' "${ROOT_DIR}/files-alpine/run.sh"
 assert_file_contains "Dockerfile installs Alpine command overrides after asset staging" 'for script in koha-create koha-plack koha-worker koha-functions\.sh' "$DOCKERFILE"
 
 runtime_available=0
