@@ -4,6 +4,8 @@ tags: [perl, cpan, perltidy, perlcritic, prove, dbi, dbd-mysql, moose, template,
 ---
 # Perl Integration in Koha
 
+> **Historical Ubuntu implementation context.** Shared Koha/Perl concepts may still apply, but paths and package assumptions are not the Alpine runtime contract. See [[18 - Alpine Runtime Architecture]] for the current image layout.
+
 How Perl ties the Koha stack together — from runtime scripts to build tools.
 
 ## Overview
@@ -179,7 +181,7 @@ my $es = Elasticsearch->new(
     hosts => ['https://os01:9200'],
     ssl => 1,
     username => 'admin',
-    password => $password,
+    password =<set-in-local-env>
 );
 ```
 

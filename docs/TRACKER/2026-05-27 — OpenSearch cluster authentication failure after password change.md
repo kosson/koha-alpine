@@ -33,7 +33,7 @@ With `DISABLE_INSTALL_DEMO_CONFIG=true`, the OpenSearch Docker entrypoint does *
 Both `.env` files had:
 
 ```bash
-OPENSEARCH_INITIAL_ADMIN_PASSWORD="testSimplu"
+OPENSEARCH_INITIAL_ADMIN_PASSWORD=<set-in-local-env>
 ```
 
 Docker Compose strips the double quotes during env-file parsing, so the effective value is `testSimplu` — functionally correct. However, the literal quotes were a latent confusion risk (especially in scripts that read the file with `grep`/`awk` without stripping quotes).
@@ -64,10 +64,10 @@ Forces a fresh cluster bootstrap under the new SSL certificate identities. All K
 
 ```bash
 # Before
-OPENSEARCH_INITIAL_ADMIN_PASSWORD="testSimplu"
+OPENSEARCH_INITIAL_ADMIN_PASSWORD=<set-in-local-env>
 
 # After
-OPENSEARCH_INITIAL_ADMIN_PASSWORD=testSimplu
+OPENSEARCH_INITIAL_ADMIN_PASSWORD=<set-in-local-env>
 ```
 
 Applied to both `OpenSearch-3.6/.env` and `koha-docker/env/.env`.

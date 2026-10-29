@@ -48,7 +48,7 @@ Koha's `koha-conf.xml` has an `<elasticsearch>` block. Every XML child element i
 `${ELASTIC_OPTIONS}` is expanded by `envsubst` from the container environment. So setting:
 
 ```bash
-ELASTIC_OPTIONS=<ssl_options><SSL_verify_mode>0</SSL_verify_mode></ssl_options>
+ELASTIC_OPTIONS=<configure-with-local-credentials>
 ```
 
 causes the generated `koha-conf.xml` to contain:

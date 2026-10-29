@@ -4,6 +4,8 @@ tags: [mariadb, database, schema, koha_kohadev, sql-mode, backup, restore, data-
 ---
 # MariaDB & Database
 
+> **Historical Ubuntu architecture.** The current Alpine database service and project-scoped volume behavior are defined in `docker-compose-alpinekoha.yml`; see [[18 - Alpine Runtime Architecture]].
+
 MariaDB 10.11 runs the relational data store for the Koha instance.
 
 ## Container Setup

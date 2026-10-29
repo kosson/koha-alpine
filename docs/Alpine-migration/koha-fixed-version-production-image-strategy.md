@@ -1,5 +1,13 @@
 # Koha Alpine Fixed-Version Production Image Strategy
 
+> **Status:** This document began as a design proposal. Its image targets,
+> source pinning, production Compose override, and runtime reduction have since
+> been implemented for the recorded Koha release. The proposal is not evidence
+> of an end-to-end Ubuntu migration or production disaster-recovery acceptance.
+> Use the [current acceptance gates](./End-to-end-migration-acceptance.md) and
+> [release operations guide](./Phase-F-release-operations.md) for current
+> status and remaining proof.
+
 ## 1) Objective
 
 Define a dual-track container strategy for this project:
@@ -206,7 +214,14 @@ Phase 4: Validate and benchmark
 Phase 5: Promote production track
 - document release process for each Koha version.
 
-## 11) Acceptance criteria
+## 11) Original image-level acceptance criteria
+
+These are historical criteria for a production image, not end-to-end migration
+acceptance. The pinned-image/build/no-source-mount/health criteria have evidence
+for the recorded release. The original claim that rollback is "straightforward"
+is not accepted: Koha database schema upgrades and project-scoped volumes make
+rollback dependent on a rehearsed database restore and matching external assets.
+See the [end-to-end acceptance matrix](./End-to-end-migration-acceptance.md).
 
 A production version build is considered complete when:
 
@@ -218,7 +233,11 @@ A production version build is considered complete when:
 6. Health checks pass and service endpoints are reachable.
 7. Rollback to prior image tag is straightforward.
 
-## 12) Suggested implementation details for this repository
+## 12) Original implementation suggestions (superseded)
+
+The following implementation checklist is retained as historical design
+context; the implementation has since advanced. Use current Dockerfiles,
+Compose files, `stack-alpine.sh`, and the Phase F guide instead.
 
 1. Dockerfile
 - Keep Dockerfile-Alpine as source of truth, refactor into named targets:
@@ -255,7 +274,11 @@ COMPOSE_PROJECT_NAME=koha-prod-26-11-00 \
 KOHA_ALPINE_IMAGE_TAG=kosson/koha-alpine-prod:26.11.00 \
 docker compose -f docker-compose-alpinekoha.yml -f docker-compose.prod.yml up -d
 
-## 13) Open decisions
+## 13) Original open decisions (historical)
+
+These questions were recorded before the current Alpine runtime was implemented;
+they are not current implementation blockers. End-to-end acceptance gaps are
+tracked in the current acceptance matrix.
 
 Before implementation, decide explicitly:
 
@@ -264,7 +287,7 @@ Before implementation, decide explicitly:
 3. Whether gitify dependency is fully removed before first prod release.
 4. Whether database initialization is done in-app container or in a one-shot job.
 
-## 14) Recommended first iteration (practical)
+## 14) Original recommended first iteration (historical)
 
 For fastest success with low risk:
 

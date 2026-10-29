@@ -4,6 +4,8 @@ tags: [networking, docker-networks, kohanet, knonikl, opensearch-36_osearch, fro
 ---
 # Networking
 
+> **Historical Ubuntu networking reference.** Network names and ports below are not authoritative for Alpine. Koha currently publishes container ports 8080/8081; see [[18 - Alpine Runtime Architecture]] and `docker-compose-alpinekoha.yml`.
+
 Five Docker networks interconnect the containers.
 
 ## Network List

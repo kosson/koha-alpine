@@ -4,6 +4,8 @@ tags: [patches, hotfixes, git-bz, sql-mode, only-full-group-by, apply-patches.sh
 ---
 # Patches & Hotfixes
 
+> **Historical Ubuntu workflow.** Confirm patch paths and scripts against the current Alpine repository before following these steps.
+
 How patches are managed in the Koha source tree.
 
 ## Patch Directory

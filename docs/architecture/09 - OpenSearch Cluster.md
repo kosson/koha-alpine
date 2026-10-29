@@ -4,6 +4,8 @@ tags: [opensearch, cluster, os01, os02, os03, os04, os05, mTLS, health-checks, p
 ---
 # OpenSearch Cluster
 
+> **Historical architecture reference.** Verify node count, ports, persistence, and TLS details against the current `OpenSearch-3.6/` Compose files before applying these instructions. See [[18 - Alpine Runtime Architecture]] for how Koha joins this separate project.
+
 Five-node cluster running OpenSearch 3.6 with mTLS security and performance monitoring.
 
 ## Architecture

@@ -23,7 +23,10 @@ OPENSEARCH_DIR="${SCRIPT_DIR}/OpenSearch-3.6"
 TRAEFIK_DIR="${SCRIPT_DIR}/traefik"
 KOHA_COMPOSE_FILE="${SCRIPT_DIR}/docker-compose-alpinekoha.yml"
 KOHA_COMPOSE_PROD_FILE="${SCRIPT_DIR}/docker-compose.prod.yml"
-KOHA_ENV_FILE="${SCRIPT_DIR}/env/.env"
+KOHA_ENV_FILE="${KOHA_ENV_FILE:-${SCRIPT_DIR}/env/.env}"
+if [[ "${KOHA_ENV_FILE}" != /* ]]; then
+  KOHA_ENV_FILE="$(cd "$(dirname "${KOHA_ENV_FILE}")" && pwd)/$(basename "${KOHA_ENV_FILE}")"
+fi
 KOHA_PROJECT_DIR="${SCRIPT_DIR}"
 KOHA_DEFAULT_REPO_URL="https://git.koha-community.org/Koha-community/Koha.git"
 MARIADB_SSL_DIR="${SCRIPT_DIR}/files-alpine/mariadb-ssl"
@@ -90,8 +93,8 @@ KOHA_INTRANET_SUFFIX="$(_env_val "${KOHA_ENV_FILE}" KOHA_INTRANET_SUFFIX -intra)
 KOHA_OPAC_PORT="$(_env_val      "${KOHA_ENV_FILE}" KOHA_OPAC_PORT      8080)"
 KOHA_INTRANET_PORT="$(_env_val  "${KOHA_ENV_FILE}" KOHA_INTRANET_PORT  8081)"
 KOHA_USER="$(_env_val "${KOHA_ENV_FILE}" KOHA_USER koha)"
-KOHA_PASS="$(_env_val "${KOHA_ENV_FILE}" KOHA_PASS koha)"
-KOHA_DB_ROOT_PASSWORD="$(_env_val "${KOHA_ENV_FILE}" KOHA_DB_ROOT_PASSWORD password)"
+KOHA_PASS="$(_env_val "${KOHA_ENV_FILE}" KOHA_PASS "")"
+KOHA_DB_ROOT_PASSWORD="$(_env_val "${KOHA_ENV_FILE}" KOHA_DB_ROOT_PASSWORD "")"
 TRAEFIK_HTTP_PORT="$(_env_val "${TRAEFIK_DIR}/.env" TRAEFIK_HTTP_PORT 80)"
 TRAEFIK_HTTPS_PORT="$(_env_val "${TRAEFIK_DIR}/.env" TRAEFIK_HTTPS_PORT 443)"
 TRAEFIK_DASHBOARD_PORT="$(_env_val "${TRAEFIK_DIR}/.env" TRAEFIK_DASHBOARD_PORT 8083)"
@@ -99,7 +102,7 @@ ACME_EMAIL="$(_env_val "${TRAEFIK_DIR}/.env" ACME_EMAIL "")"
 KOHA_ELASTICSEARCH="$(_env_val "${KOHA_ENV_FILE}" KOHA_ALPINE_ELASTICSEARCH "$(_env_val "${KOHA_ENV_FILE}" KOHA_ELASTICSEARCH no)")"
 # Admin password: prefer the OS .env file (source of truth for the cluster)
 OS_ADMIN_PASS="$(_env_val "${OPENSEARCH_DIR}/.env" OPENSEARCH_INITIAL_ADMIN_PASSWORD \
-  "$(_env_val "${KOHA_ENV_FILE}" OPENSEARCH_INITIAL_ADMIN_PASSWORD 'changeme')")"
+  "$(_env_val "${KOHA_ENV_FILE}" OPENSEARCH_INITIAL_ADMIN_PASSWORD "")")"
 KOHA_ELASTIC_OPTIONS="$(_env_val "${KOHA_ENV_FILE}" ELASTIC_OPTIONS "")"
 DASHBOARDS_DOMAIN="$(_env_val "${OPENSEARCH_DIR}/.env" DASHBOARDS_DOMAIN "dashboards.localhost")"
 TLS_CERTRESOLVER="$(_env_val "${KOHA_ENV_FILE}" TLS_CERTRESOLVER "")"
@@ -118,12 +121,14 @@ KOHA_RELEASE_REF="$(_env_val "${KOHA_ENV_FILE}" KOHA_RELEASE_REF "${KOHA_GIT_TAG
 KOHA_RELEASE_GIT_URL="$(_env_val "${KOHA_ENV_FILE}" KOHA_RELEASE_GIT_URL "${KOHA_GIT_URL}")"
 KOHA_RELEASE_GIT_DEPTH="$(_env_val "${KOHA_ENV_FILE}" KOHA_RELEASE_GIT_DEPTH "${KOHA_GIT_DEPTH}")"
 KOHA_ALPINE_PROD_IMAGE_TAG="$(_env_val "${KOHA_ENV_FILE}" KOHA_ALPINE_PROD_IMAGE_TAG "")"
+KOHA_PROD_PROJECT="$(_env_val "${KOHA_ENV_FILE}" KOHA_PROD_PROJECT "${KOHA_PROD_PROJECT:-}")"
+KOHA_CONTAINER_ENV_FILE="${KOHA_CONTAINER_ENV_FILE:-$(_env_val "${KOHA_ENV_FILE}" KOHA_CONTAINER_ENV_FILE "${KOHA_ENV_FILE}")}"
 
 DB_NAME="koha_${KOHA_INSTANCE}"
 DB_USER="koha_${KOHA_INSTANCE}"
 KOHA_PROJECT="$(basename "${KOHA_PROJECT_DIR}")"   # which strips away all leading parent directories and leaves only the final folder name string → koha-alpine
-# Auto-update SYNC_REPO to current machine's full absolute path. This should eliminate the need of doing a manual edit of env/.env when moving the project to a different machine or path.
-perl -pi -e "s|^SYNC_REPO=.*|SYNC_REPO=${KOHA_PROJECT_DIR}/koha|" "${KOHA_PROJECT_DIR}/env/.env"
+SYNC_REPO="${SYNC_REPO:-${SCRIPT_DIR}/koha}"
+export KOHA_ENV_FILE KOHA_CONTAINER_ENV_FILE SYNC_REPO
 KOHA_COMPOSE_PROJECT="${KOHA_PROJECT}"
 DB_CONTAINER="${KOHA_COMPOSE_PROJECT}-db-1"
 BACKUP_ROOT="${SCRIPT_DIR}/backups"
@@ -156,6 +161,9 @@ reload_runtime_config() {
   KOHA_RELEASE_GIT_URL="$(_env_val "${KOHA_ENV_FILE}" KOHA_RELEASE_GIT_URL "${KOHA_RELEASE_GIT_URL}")"
   KOHA_RELEASE_GIT_DEPTH="$(_env_val "${KOHA_ENV_FILE}" KOHA_RELEASE_GIT_DEPTH "${KOHA_RELEASE_GIT_DEPTH}")"
   KOHA_ALPINE_PROD_IMAGE_TAG="$(_env_val "${KOHA_ENV_FILE}" KOHA_ALPINE_PROD_IMAGE_TAG "${KOHA_ALPINE_PROD_IMAGE_TAG}")"
+  KOHA_PROD_PROJECT="$(_env_val "${KOHA_ENV_FILE}" KOHA_PROD_PROJECT "${KOHA_PROD_PROJECT}")"
+  KOHA_CONTAINER_ENV_FILE="$(_env_val "${KOHA_ENV_FILE}" KOHA_CONTAINER_ENV_FILE "${KOHA_CONTAINER_ENV_FILE}")"
+  SYNC_REPO="$(_env_val "${KOHA_ENV_FILE}" SYNC_REPO "${SYNC_REPO}")"
   TRAEFIK_HTTP_PORT="$(_env_val "${TRAEFIK_DIR}/.env" TRAEFIK_HTTP_PORT "${TRAEFIK_HTTP_PORT}")"
   TRAEFIK_HTTPS_PORT="$(_env_val "${TRAEFIK_DIR}/.env" TRAEFIK_HTTPS_PORT "${TRAEFIK_HTTPS_PORT}")"
   TRAEFIK_DASHBOARD_PORT="$(_env_val "${TRAEFIK_DIR}/.env" TRAEFIK_DASHBOARD_PORT "${TRAEFIK_DASHBOARD_PORT}")"
@@ -235,15 +243,22 @@ configure_koha_mode() {
       KOHA_ALPINE_PROD_IMAGE_TAG="kosson/koha-alpine-prod:${KOHA_RELEASE_VERSION}"
     fi
 
-    local _slug
-    _slug="$(version_slug "${KOHA_RELEASE_VERSION}")"
-    KOHA_COMPOSE_PROJECT="koha-prod-${_slug}"
+    if [[ -n "${KOHA_PROD_PROJECT}" ]]; then
+      [[ "${KOHA_PROD_PROJECT}" =~ ^[a-z0-9][a-z0-9_-]*$ ]] \
+        || die "KOHA_PROD_PROJECT must start with a lowercase letter or digit and contain only lowercase letters, digits, '_' or '-'."
+      KOHA_COMPOSE_PROJECT="${KOHA_PROD_PROJECT}"
+    else
+      local _slug
+      _slug="$(version_slug "${KOHA_RELEASE_VERSION}")"
+      KOHA_COMPOSE_PROJECT="koha-prod-${_slug}"
+    fi
 
     export KOHA_RELEASE_VERSION
     export KOHA_RELEASE_REF
     export KOHA_RELEASE_GIT_URL
     export KOHA_RELEASE_GIT_DEPTH
     export KOHA_ALPINE_PROD_IMAGE_TAG
+    export KOHA_CONTAINER_ENV_FILE SYNC_REPO
   else
     KOHA_COMPOSE_PROJECT="${KOHA_PROJECT}"
   fi
@@ -395,7 +410,13 @@ check_prereqs() {
   command -v docker   >/dev/null 2>&1 || die "docker not found in PATH"
   docker info >/dev/null 2>&1 || die "Docker daemon is not running. Start it first (for example: sudo systemctl start docker)."
   docker compose version >/dev/null 2>&1 || die "Docker Compose plugin not found"
-  [[ -f "${KOHA_ENV_FILE}" ]] || die "env/.env not found — copy and configure it first"
+  [[ -f "${KOHA_ENV_FILE}" ]] || die "Koha environment file not found: ${KOHA_ENV_FILE}. Set KOHA_ENV_FILE to an access-controlled local file."
+  [[ -f "${KOHA_CONTAINER_ENV_FILE}" ]] || die "Koha container environment file not found: ${KOHA_CONTAINER_ENV_FILE}"
+  [[ -n "${KOHA_DB_ROOT_PASSWORD}" ]] || die "KOHA_DB_ROOT_PASSWORD must be set in ${KOHA_ENV_FILE}"
+  [[ -n "$(_env_val "${KOHA_ENV_FILE}" KOHA_DB_PASSWORD "")" ]] || die "KOHA_DB_PASSWORD must be set in ${KOHA_ENV_FILE}"
+  [[ -n "$(_env_val "${KOHA_ENV_FILE}" KOHA_RABBITMQ_PASS "")" ]] || die "KOHA_RABBITMQ_PASS must be set in ${KOHA_ENV_FILE}"
+  [[ -n "${KOHA_PASS}" || -n "$(_env_val "${KOHA_ENV_FILE}" KOHA_ADMIN_PASS "")" ]] \
+    || die "KOHA_PASS or KOHA_ADMIN_PASS must be set in ${KOHA_ENV_FILE}"
   if [[ "${KOHA_IMAGE_MODE}" == "prod" ]]; then
     [[ -f "${KOHA_COMPOSE_PROD_FILE}" ]] || die "docker-compose.prod.yml not found"
   fi
@@ -508,7 +529,7 @@ EOF
   _set_env_val "${KOHA_ENV_FILE}" "KOHA_DB_TLS_CLIENT_KEY" "/etc/mysql/ssl/client-key.pem"
   reload_runtime_config
 
-  ok "Configured env/.env for Koha DB client TLS cert/key."
+  ok "Configured ${KOHA_ENV_FILE} for Koha DB client TLS cert/key."
   log "Values set: KOHA_DB_TLS_CLIENT_CERTIFICATE=/etc/mysql/ssl/client-cert.pem"
   log "           KOHA_DB_TLS_CLIENT_KEY=/etc/mysql/ssl/client-key.pem"
 }
@@ -606,6 +627,16 @@ ensure_opensearch_certs() {
     [[ -f "${file_path}" ]] || die "Expected OpenSearch certificate file missing or invalid: ${file_path}"
   done
 
+  if [[ ! -f "${OPENSEARCH_DIR}/assets/local-config/internal_users.yml" || \
+        ! -f "${OPENSEARCH_DIR}/assets/local-config/opensearch_dashboards.yml" ]]; then
+    log "Generating missing OpenSearch authentication config without rotating certificates or touching data."
+    bash "${OPENSEARCH_DIR}/prepare_local_auth_config.sh"
+  fi
+  [[ -f "${OPENSEARCH_DIR}/assets/local-config/internal_users.yml" ]] \
+    || die "OpenSearch internal-user config was not generated."
+  [[ -f "${OPENSEARCH_DIR}/assets/local-config/opensearch_dashboards.yml" ]] \
+    || die "OpenSearch Dashboards config was not generated."
+
   ok "OpenSearch certificates ready."
 }
 
@@ -614,9 +645,10 @@ sync_koha_opensearch_credentials() {
     return 0
   fi
 
+  [[ -n "${OS_ADMIN_PASS}" ]] \
+    || die "Set OPENSEARCH_INITIAL_ADMIN_PASSWORD in the local OpenSearch environment file."
   if [[ -z "${KOHA_ELASTIC_OPTIONS}" ]]; then
-    warn "ELASTIC_OPTIONS is empty in env/.env; Koha may not be able to authenticate to OpenSearch."
-    return 0
+    die "Set ELASTIC_OPTIONS in ${KOHA_ENV_FILE} when OpenSearch is enabled."
   fi
 
   ELASTIC_OPTIONS="$(OPENSEARCH_ADMIN_PASSWORD="${OS_ADMIN_PASS}" ELASTIC_OPTIONS="${KOHA_ELASTIC_OPTIONS}" python3 - <<'PY'
@@ -1087,6 +1119,11 @@ ${BOLD}Options for 'start' and 'build':${RESET}
                         Choose compose/build mode (default: dev)
   --koha-version <ver>  Production version label (for example 26.11.00)
   --koha-ref <ref>      Production git ref/tag/commit (for example v26.11.00)
+  KOHA_PROD_PROJECT     Optional stable production Compose project name.
+                        Defaults to a version-specific project when unset.
+  KOHA_ENV_FILE          Host-side Koha configuration path (default: env/.env).
+  KOHA_CONTAINER_ENV_FILE
+                        Koha container env file (defaults to KOHA_ENV_FILE).
   --build-opensearch    Rebuild the kosson/opensearch-icu image (analysis-icu plugin)
   --build-koha          Rebuild the Koha image for the selected --image-mode
   --build               Rebuild both OpenSearch and Koha images

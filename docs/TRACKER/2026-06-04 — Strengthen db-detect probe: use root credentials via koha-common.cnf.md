@@ -24,7 +24,7 @@ The auto-detection probe introduced on 2026-06-03 connected to MariaDB using the
 [client]
 host     = ${DB_HOSTNAME}
 user     = root
-password = ${KOHA_DB_ROOT_PASSWORD}
+password = <set-in-local-env>
 ```
 
 `KOHA_DB_ROOT_PASSWORD` is read from the container environment (set in `env/.env`; forwarded via `docker-compose.yml`'s `environment:` block). It must match the `MYSQL_ROOT_PASSWORD` used by the `db` service.

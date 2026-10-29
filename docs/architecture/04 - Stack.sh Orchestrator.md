@@ -4,6 +4,8 @@ tags: [stack.sh, startup, commands, build, deploy, network-creation, log-scrapin
 ---
 # Stack.sh Orchestrator
 
+> **Historical Ubuntu architecture.** The current repository entry point is `stack-alpine.sh`; commands and behavior described below may be obsolete. See [[18 - Alpine Runtime Architecture]] and the script's `--help`.
+
 The main management script. Location: `stack.sh` at the repository root.
 
 ## Usage
@@ -139,10 +141,10 @@ The OpenSearch credential sync uses an embedded Python script:
 
 ```bash
 sync_koha_opensearch_credentials() {
-  ELASTIC_OPTIONS="$(python3 - <<'PY'
+  ELASTIC_OPTIONS=<configure-with-local-credentials>
 import os, re
 options = os.environ["ELASTIC_OPTIONS"]
-password = os.environ["OPENSEARCH_INITIAL_ADMIN_PASSWORD"]
+password = <set-in-local-env>
 synced = re.sub(r'(<userinfo>admin:)[^<]*(</userinfo>)', r'\1' + password + r'\2', options, count=1)
 print(synced)
 PY

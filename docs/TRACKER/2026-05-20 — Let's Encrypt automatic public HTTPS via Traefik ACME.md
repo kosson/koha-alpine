@@ -145,10 +145,10 @@ When `KOHA_IMAGE_TAG` is set in `env/.env` to a published tag (e.g., `kosson/koh
 
 ```yaml
 # Before
-MYSQL_ROOT_PASSWORD: password
+MYSQL_ROOT_PASSWORD:<set-in-local-env>
 
 # After
-MYSQL_ROOT_PASSWORD: ${KOHA_DB_ROOT_PASSWORD:-password}
+MYSQL_ROOT_PASSWORD:<set-in-local-env>
 ```
 
 Allows overriding the MariaDB root password from `env/.env` without editing

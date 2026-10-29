@@ -393,7 +393,7 @@ Because the hash must be deterministic and equal across the entire cluster:
 and writes the same value to all five `opensearch.yml` files:
 
 ```yaml
-plugins.security.compliance.salt: "<16-char-random-string>"
+plugins.security.compliance.salt: ${OS_COMPLIANCE_SALT}
 ```
 
 **Note:** In OpenSearch 2.x the setting was `opensearch_security.compliance.salt`; OpenSearch 3.x
@@ -414,7 +414,7 @@ Generate a salt: `openssl rand -base64 12 | tr -dc 'a-zA-Z0-9' | head -c 16`
 
 **Fix applied:** Added master key to all 5 `opensearch.yml` files:
 ```yaml
-plugins.query.datasources.encryption.masterkey: "679528737e08ecf6b7db204cc523d62d"
+plugins.query.datasources.encryption.masterkey: ${OS_QUERY_MASTERKEY}
 ```
 **Note:** Key is identical on all nodes (required). Store the value securely — it cannot be changed without re-encrypting all datasource credentials.
 
@@ -430,7 +430,7 @@ plugin's datasource create/update APIs are unavailable.
 
 **Fix:** Add to every node's `opensearch.yml`:
 ```yaml
-plugins.query.datasources.encryption.masterkey: "<32-char-AES-key>"
+plugins.query.datasources.encryption.masterkey: ${OS_QUERY_MASTERKEY}
 ```
 Generate: `openssl rand -base64 24 | tr -dc 'a-zA-Z0-9' | head -c 32`
 
@@ -596,8 +596,8 @@ Logging falls back to NOP (no-operation), meaning those libraries produce no log
 
 **Issue:** The variable `OPENSEARCH_INITIAL_ADMIN_PASSWORD` is listed twice:
 ```yaml
-- OPENSEARCH_INITIAL_ADMIN_PASSWORD=${OPENSEARCH_INITIAL_ADMIN_PASSWORD}
-- OPENSEARCH_INITIAL_ADMIN_PASSWORD=${OPENSEARCH_INITIAL_ADMIN_PASSWORD}  # ← duplicate
+- OPENSEARCH_INITIAL_ADMIN_PASSWORD=<set-in-local-env>
+- OPENSEARCH_INITIAL_ADMIN_PASSWORD=<set-in-local-env>
 ```
 
 **Fix:** Remove the duplicate line.

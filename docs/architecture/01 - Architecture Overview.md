@@ -4,6 +4,8 @@ tags: [architecture, topology, overview, services, data-flow]
 ---
 # Architecture Overview
 
+> **Historical Ubuntu architecture.** This page predates the Alpine implementation and is not the current runtime contract. See [[18 - Alpine Runtime Architecture]] for current services, ports, mounts, and production behavior.
+
 The Koha Docker project is a self-contained, multi-container development environment for Koha ILS (version 25/26). It packages the entire stack — database, search, caching, web server, reverse proxy — into a reproducible Docker Compose setup.
 ## Topology
 

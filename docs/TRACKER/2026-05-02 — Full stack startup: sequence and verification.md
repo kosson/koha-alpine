@@ -165,7 +165,7 @@ ELASTIC_SERVER=https://os01:9200
 #   ssl_options  → disables IO::Socket::SSL certificate verification
 #   userinfo     → passes credentials as raw string, base64-encoded correctly
 #   client_version → set to 7 to skip the ES 8.x product check that rejects OpenSearch
-ELASTIC_OPTIONS=<ssl_options><SSL_verify_mode>0</SSL_verify_mode></ssl_options><userinfo>admin:test@Cici24#ANA</userinfo><client_version>7</client_version>
+ELASTIC_OPTIONS=<configure-with-local-credentials>
 
 # Kept for any LWP-based code paths (e.g., Koha's REST calls)
 PERL_LWP_SSL_VERIFY_HOSTNAME=0

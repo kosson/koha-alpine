@@ -15,8 +15,8 @@ tags:
 After every `git pull` from another workstation, the two security-critical settings in each node's `opensearch.yml` were overwritten with the values generated on a different machine:
 
 ```yaml
-plugins.security.compliance.salt: "R77RJ8MoyToszzRk"
-plugins.query.datasources.encryption.masterkey: "dd3128606f96784ad30e65c3ef165fb1"
+plugins.security.compliance.salt: ${OS_COMPLIANCE_SALT}
+plugins.query.datasources.encryption.masterkey: ${OS_QUERY_MASTERKEY}
 ```
 
 Both values are machine-specific because `opensearch_local_certificates_creator.sh` generates them with `tr -dc 'A-Za-z0-9' < /dev/urandom` and `openssl rand -hex 16` on every run. Until now the script patched the values directly into all five `opensearch.yml` files — files that **are** tracked by git. As a result:
@@ -63,9 +63,9 @@ Before (identical in all five files):
 
 ```yaml
 # W2: compliance field-masking salt (must be identical on all nodes)
-plugins.security.compliance.salt: "R77RJ8MoyToszzRk"
+plugins.security.compliance.salt: ${OS_COMPLIANCE_SALT}
 # W3: SQL plugin datasource encryption master key
-plugins.query.datasources.encryption.masterkey: "dd3128606f96784ad30e65c3ef165fb1"
+plugins.query.datasources.encryption.masterkey: ${OS_QUERY_MASTERKEY}
 ```
 
 After (identical in all five files):
@@ -73,10 +73,10 @@ After (identical in all five files):
 ```yaml
 # W2: compliance field-masking salt (must be identical on all nodes)
 # Value is read from OS_COMPLIANCE_SALT in OpenSearch-3.6/.env (gitignored — machine-specific)
-plugins.security.compliance.salt: "${OS_COMPLIANCE_SALT}"
+plugins.security.compliance.salt: ${OS_COMPLIANCE_SALT}
 # W3: SQL plugin datasource encryption master key
 # Value is read from OS_QUERY_MASTERKEY in OpenSearch-3.6/.env (gitignored — machine-specific)
-plugins.query.datasources.encryption.masterkey: "${OS_QUERY_MASTERKEY}"
+plugins.query.datasources.encryption.masterkey: ${OS_QUERY_MASTERKEY}
 ```
 
 The `${...}` syntax is OpenSearch's built-in env-var interpolation — it reads the value from the container's environment at startup, before the Security plugin processes the setting. No additional configuration is required to activate this feature.
@@ -88,8 +88,8 @@ The section that previously ran a `for cfg in .../os*/opensearch.yml` loop with 
 **Before:**
 
 ```bash
-COMPLIANCE_SALT="$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 16)"
-SQL_MASTERKEY="$(openssl rand -hex 16)"
+COMPLIANCE_SALT=<generated-locally>
+SQL_MASTERKEY=<generated-locally>
 CONFIG_BASE="$SCRIPT_DIR/assets/opensearch/config"
 
 for cfg in "$CONFIG_BASE"/os*/opensearch.yml; do
@@ -112,8 +112,8 @@ done
 # ENV_FILE is used by both the compliance-salt section and the hash section below.
 ENV_FILE="$SCRIPT_DIR/.env"
 
-COMPLIANCE_SALT="$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 16)"
-SQL_MASTERKEY="$(openssl rand -hex 16)"
+COMPLIANCE_SALT=<generated-locally>
+SQL_MASTERKEY=<generated-locally>
 
 _upsert_env() {
     local key="$1" value="$2" file="$3"
@@ -146,8 +146,8 @@ A new section was added at the end of the file documenting the machine-local var
 # WARNING: Do NOT change OS_QUERY_MASTERKEY on a running cluster — all previously
 # stored SQL datasource credentials would become unreadable. Regenerate only
 # when setting up a fresh cluster (after wiping os0{1..5}data/).
-OS_COMPLIANCE_SALT=R77RJ8MoyToszzRk
-OS_QUERY_MASTERKEY=dd3128606f96784ad30e65c3ef165fb1
+OS_COMPLIANCE_SALT=<generated-locally>
+OS_QUERY_MASTERKEY=<generated-locally>
 ```
 
 ### 4. `OpenSearch-3.6/.env.example` — new git-tracked template
@@ -155,8 +155,8 @@ OS_QUERY_MASTERKEY=dd3128606f96784ad30e65c3ef165fb1
 A new file committed to git that serves as the setup template for any new workstation. It contains all variables from `.env` but with the machine-specific fields left blank and the password set to `changeme`:
 
 ```bash
-OS_COMPLIANCE_SALT=
-OS_QUERY_MASTERKEY=
+OS_COMPLIANCE_SALT=<generated-locally>
+OS_QUERY_MASTERKEY=<generated-locally>
 ```
 
 First-time setup on a new machine:

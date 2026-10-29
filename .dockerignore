@@ -1,0 +1,11 @@
+.git
+**/.git
+docs/
+tests/
+traefik/
+OpenSearch-3.6/
+backups/
+env/
+files-alpine/mariadb-ssl/
+**/node_modules/
+**/.cache/

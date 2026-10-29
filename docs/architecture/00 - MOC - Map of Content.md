@@ -4,10 +4,15 @@ tags: [map-of-content, overview, navigation, index]
 ---
 # Map of Content — Koha Docker Architecture
 
-This vault is a navigational guide to the Koha Docker project at `~/Documents/koha-docker`. Use these notes to understand the architecture, operations, and known issues.
+This directory contains architecture notes inherited from the Ubuntu-based
+`koha-docker` project. They are retained for historical context and may describe
+obsolete services, paths, ports, and security settings. The current Alpine
+runtime is documented in [[18 - Alpine Runtime Architecture]] and the repository
+root's `README.md`; the Dockerfiles and Compose files are authoritative.
 
 ## Quick Links
 
+- [[18 - Alpine Runtime Architecture]] — Current Alpine images, services, ports, volumes, and provenance
 - [[01 - Architecture Overview]] — High-level diagram, service list, data flow
 - [[02 - Container Breakdown]] — Per-container details, ports, roles
 - [[03 - Docker Compose Deep Dive]] — How the compose files orchestrate everything
@@ -25,6 +30,8 @@ This vault is a navigational guide to the Koha Docker project at `~/Documents/ko
 - [[15 - Demo Data & MARC Import]] — insert_data.pl, MARC import workflow, pitfalls
 - [[16 - Dockerfile Breakdown]] — Layer-by-layer analysis, package decisions
 - [[17 - Perl Integration in Koha]] — How Perl scripts tie the stack together
+- [Phase F release operations](../Alpine-migration/Phase-F-release-operations.md) — CI, releases, secrets, backup, and rollback
+- [End-to-end migration acceptance](../Alpine-migration/End-to-end-migration-acceptance.md) — Required evidence before claiming Ubuntu-to-Alpine migration completion
 
 ## Cross-References
 

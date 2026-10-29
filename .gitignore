@@ -16,6 +16,8 @@ OpenSearch-3.6/assets/opensearch/data/
 # Each workstation generates its own values via opensearch_local_certificates_creator.sh.
 # Copy OpenSearch-3.6/.env.example to OpenSearch-3.6/.env and run the script on first use.
 OpenSearch-3.6/.env
+# Generated password hashes and Dashboards credentials; never commit these.
+OpenSearch-3.6/assets/local-config/
 
 # Editor / OS noise
 .DS_Store

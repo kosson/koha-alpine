@@ -4,6 +4,8 @@ tags: [docker-compose, orchestration, services, volumes, networks, compose-files
 ---
 # Docker Compose Deep Dive
 
+> **Historical Ubuntu architecture.** This page describes an earlier Compose layout and contains stale paths and settings. The current Alpine files are `docker-compose-alpinekoha.yml` and `docker-compose.prod.yml`; see [[18 - Alpine Runtime Architecture]].
+
 How the three compose files work together.
 ## Main Compose (`docker-compose.yml`)
 
@@ -103,7 +105,7 @@ services:
       - discovery.seed_hosts=os01,os02,os03,os04,os05
       - cluster.initial_cluster_manager_nodes=os01,os02
       - bootstrap.memory_lock=true
-      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=...
+      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=<set-in-local-env>
       - OPENSEARCH_JAVA_OPTS=...
       - DISABLE_INSTALL_DEMO_CONFIG=true
     ulimits: { memlock: -1, nofile: 65536 }

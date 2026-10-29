@@ -8,7 +8,7 @@ COMPOSE_FILE="${ROOT_DIR}/docker-compose-alpinekoha.yml"
 PROJECT_NAME="koha-alpine-isolation-test"
 TEST_ENV_FILE="$(mktemp)"
 trap 'rm -f "${TEST_ENV_FILE}"' EXIT
-printf 'KOHA_COMPOSE_ISOLATION_SENTINEL=from-test-env\n' >"${TEST_ENV_FILE}"
+printf 'KOHA_COMPOSE_ISOLATION_SENTINEL=from-test-env\nKOHA_DB_ROOT_PASSWORD=local-test-root\nKOHA_DB_PASSWORD=local-test-db\nKOHA_RABBITMQ_PASS=local-test-rabbit\n' >"${TEST_ENV_FILE}"
 
 PASS=0
 FAIL=0
@@ -46,6 +46,9 @@ CONFIG="$(
         KOHA_OPAC_SUFFIX= \
         MANA_URL=https://mana-kb.koha-community.org \
         LOCAL_USER_ID=1000 \
+        KOHA_DB_ROOT_PASSWORD=local-test-root \
+        KOHA_DB_PASSWORD=local-test-db \
+        KOHA_RABBITMQ_PASS=local-test-rabbit \
         docker compose \
             --project-name "${PROJECT_NAME}" \
             --env-file /dev/null \
@@ -74,6 +77,31 @@ if grep -Fq '"KOHA_COMPOSE_ISOLATION_SENTINEL": "from-test-env"' <<<"${CONFIG}";
     ok "container env file can be overridden without editing env/.env"
 else
     not_ok "container env file can be overridden without editing env/.env"
+fi
+
+EXTERNAL_ENV_CONFIG="$(
+    env \
+        KOHA_ENV_FILE="${TEST_ENV_FILE}" \
+        SYNC_REPO="${ROOT_DIR}/koha" \
+        KOHA_INSTANCE=kohadev \
+        KOHA_DOMAIN=.example.invalid \
+        KOHA_INTRANET_SUFFIX=-intra \
+        LOCAL_USER_ID=1000 \
+        docker compose \
+            --project-name "${PROJECT_NAME}" \
+            --env-file "${TEST_ENV_FILE}" \
+            --file "${COMPOSE_FILE}" \
+            config --format json 2>&1
+)" || {
+    echo "not ok - Compose renders with an external main environment file"
+    echo "${EXTERNAL_ENV_CONFIG}"
+    exit 1
+}
+
+if grep -Fq '"KOHA_COMPOSE_ISOLATION_SENTINEL": "from-test-env"' <<<"${EXTERNAL_ENV_CONFIG}"; then
+    ok "main external env file is also used as the Koha container env file by default"
+else
+    not_ok "main external env file is also used as the Koha container env file by default"
 fi
 
 if grep -Fq '"stop_grace_period": "1m0s"' <<<"${CONFIG}"; then

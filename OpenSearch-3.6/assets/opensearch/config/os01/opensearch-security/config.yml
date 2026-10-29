@@ -172,7 +172,7 @@ config:
             hosts:
             - 0.0.0.0:8389
             bind_dn: null
-            password: null
+            password:
             userbase: 'ou=people,dc=example,dc=com'
             # Filter to search for users (currently in the whole subtree beneath userbase)
             # {0} is substituted with the username
@@ -199,7 +199,7 @@ config:
             hosts:
             - 0.0.0.0:8389
             bind_dn: null
-            password: null
+            password:
             rolebase: 'ou=groups,dc=example,dc=com'
             # Filter to search for roles (currently in the whole subtree beneath rolebase)
             # {0} is substituted with the DN of the user

@@ -23,13 +23,13 @@ subject=C = RO, ST = ILFOV, L = MAGURELE, O = NIPNE, OU = DFCTI, CN = client
 Certificate request self-signature ok
 subject=C = RO, ST = ILFOV, L = MAGURELE, O = NIPNE, OU = DFCTI, CN = dashboards
 Compliance salt and SQL master key written to /mnt/beckie2/DEVELOPMENT/koha-alpine/OpenSearch-3.6/.env.
-  OS_COMPLIANCE_SALT : MBzN9V4zi00YZl8t
-  OS_QUERY_MASTERKEY : b88a511ed449a711e32a07985c829b05
+  OS_COMPLIANCE_SALT:<generated-locally>
+  OS_QUERY_MASTERKEY:<generated-locally>
   (opensearch.yml files reference these via ${OS_COMPLIANCE_SALT} / ${OS_QUERY_MASTERKEY})
 File permissions set (certs: 775, config dirs: 775, config files: 775).
 Generating bcrypt hash via opensearch:3.6.0 hash.sh ...
 internal_users.yml — all user hashes updated.
-  hash : $2y$12$PQvsv0BjVP2v9.vkbyKpHefVpWcTvo.ndP/2.sxr6khLh.eqt3E7a
+  hash : <generated-locally>
 
 NOTE: New certificates invalidate any existing cluster data.
       Wipe data directories before the next cluster start:
@@ -65,13 +65,13 @@ subject=C = RO, ST = ILFOV, L = MAGURELE, O = NIPNE, OU = DFCTI, CN = client
 Certificate request self-signature ok
 subject=C = RO, ST = ILFOV, L = MAGURELE, O = NIPNE, OU = DFCTI, CN = dashboards
 Compliance salt and SQL master key written to /mnt/beckie2/DEVELOPMENT/koha-alpine/OpenSearch-3.6/.env.
-  OS_COMPLIANCE_SALT : 6RckfDgqTkqzQofx
-  OS_QUERY_MASTERKEY : 39d856d1bc860e42791b24e0bbc8ecf9
+  OS_COMPLIANCE_SALT:<generated-locally>
+  OS_QUERY_MASTERKEY:<generated-locally>
   (opensearch.yml files reference these via ${OS_COMPLIANCE_SALT} / ${OS_QUERY_MASTERKEY})
 File permissions set (certs: 775, config dirs: 775, config files: 775).
 Generating bcrypt hash via opensearch:3.6.0 hash.sh ...
 internal_users.yml — all user hashes updated.
-  hash : $2y$12$AvABzStngEFC5N4Smzjj6uceELmszJf8qL3B7L30WSQs9NS4Q1Eeq
+  hash : <generated-locally>
 
 NOTE: New certificates invalidate any existing cluster data.
       Wipe data directories before the next cluster start:

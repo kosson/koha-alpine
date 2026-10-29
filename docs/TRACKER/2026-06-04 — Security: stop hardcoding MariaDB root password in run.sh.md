@@ -19,7 +19,7 @@ tags:
 [client]
 host     = ${DB_HOSTNAME}
 user     = root
-password = password
+password = <set-in-local-env>
 ```
 
 The literal `password` was never read from any environment variable — it was baked into the image regardless of what `KOHA_DB_ROOT_PASSWORD` was set to in `env/.env`. This created two issues:
@@ -54,7 +54,7 @@ The cnf now always mirrors whatever root password the `db` container was initial
 ```yaml
 # Root password for the MariaDB container — must match MYSQL_ROOT_PASSWORD
 # on the db service. Set in env/.env as KOHA_DB_ROOT_PASSWORD.
-KOHA_DB_ROOT_PASSWORD: ${KOHA_DB_ROOT_PASSWORD:-password}
+KOHA_DB_ROOT_PASSWORD:<set-in-local-env>
 ```
 
 The `:-password` fallback preserves backwards compatibility with existing deployments that never set the variable explicitly.
@@ -65,7 +65,7 @@ The `:-password` fallback preserves backwards compatibility with existing deploy
 # SECURITY: change this from the default before running in any non-throwaway environment.
 # Must match MYSQL_ROOT_PASSWORD on the db service. Used by run.sh to write
 # /etc/mysql/koha-common.cnf (root credentials for internal admin operations).
-KOHA_DB_ROOT_PASSWORD=password
+KOHA_DB_ROOT_PASSWORD=<set-in-local-env>
 ```
 
 ### 4. `env/template.env` — prompt operators to set a real password
@@ -76,7 +76,7 @@ Changed the template value from the implicit default to:
 # SECURITY: set a strong password here. This becomes both MYSQL_ROOT_PASSWORD for
 # the db container and the credential written to /etc/mysql/koha-common.cnf inside
 # the Koha container. Never leave this as 'password' in a networked environment.
-KOHA_DB_ROOT_PASSWORD=change_me_before_first_start
+KOHA_DB_ROOT_PASSWORD=<set-in-local-env>
 ```
 
 A `cp env/template.env env/.env` now forces the operator to actively choose a password before the stack will authenticate correctly.

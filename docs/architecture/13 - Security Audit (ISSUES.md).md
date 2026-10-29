@@ -4,6 +4,8 @@ tags: [security-audit, vulnerability-assessment, cap-add, plaintext-secrets, tls
 ---
 # Security Audit (ISSUES.md)
 
+> **Historical Ubuntu security audit.** Findings refer to an earlier implementation and may be fixed, mitigated, or inapplicable here. Do not treat this page as a current Alpine vulnerability assessment; see current controls in the Compose files and [[18 - Alpine Runtime Architecture]].
+
 Full catalog of known security, stability, and operational issues.
 
 ## Critical Issues
@@ -34,9 +36,9 @@ cap_add:
 **Risk**: All passwords stored in plaintext, potentially committed to git.
 
 ```
-KOHA_DB_ROOT_PASSWORD=[REDACTED]
-KOHA_DB_PASSWORD=[REDACTED]
-OPENSEARCH_INITIAL_ADMIN_PASSWORD=[REDACTED]
+KOHA_DB_ROOT_PASSWORD=<set-in-local-env>
+KOHA_DB_PASSWORD=<set-in-local-env>
+OPENSEARCH_INITIAL_ADMIN_PASSWORD=<set-in-local-env>
 ```
 
 **Remediation**:

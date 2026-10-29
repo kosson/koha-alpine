@@ -4,6 +4,8 @@ tags: [troubleshooting, diagnostics, netcheck.sh, opensearch-errors, mariadb-err
 ---
 # Troubleshooting
 
+> **Historical Ubuntu troubleshooting reference.** Paths, container names, and recovery commands may not apply to Alpine. Verify against the current Compose files and `stack-alpine.sh` before running commands.
+
 Common issues and how to diagnose/fix them.
 
 ## Diagnostic Tool: netcheck.sh

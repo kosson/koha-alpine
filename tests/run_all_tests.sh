@@ -28,6 +28,7 @@ fi
 SUITES=(
     "${TESTS_DIR}/test_dockerfile_perl_deps_static.sh"
     "${TESTS_DIR}/test_phase2_build_staging_static.sh"
+    "${TESTS_DIR}/test_credential_hygiene_static.sh"
     "${TESTS_DIR}/test_phase3_dual_mode_templating_static.sh"
     "${TESTS_DIR}/test_alpine_compose_isolation.sh"
     "${TESTS_DIR}/test_stack_sh_static.sh"
@@ -44,6 +45,7 @@ SUITES=(
 SUITE_LABELS=(
     "Static analysis         (Dockerfile Perl deps)"
     "Static analysis         (Phase 2 build-time staging)"
+    "Static analysis         (credential hygiene)"
     "Static analysis         (Phase 3 dual-mode templating)"
     "Compose validation      (isolated Alpine test project)"
     "Static analysis         (stack-alpine backup/restore)"

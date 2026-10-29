@@ -78,7 +78,7 @@ services:
       MESSAGE_BROKER_HOST: rabbitmq
       MESSAGE_BROKER_PORT: 5672
       MESSAGE_BROKER_USER: ${KOHA_RABBITMQ_USER:-guest}
-      MESSAGE_BROKER_PASS: ${KOHA_RABBITMQ_PASS:-guest}
+      MESSAGE_BROKER_PASS:<set-in-local-env>
       MESSAGE_BROKER_VHOST: ${KOHA_RABBITMQ_VHOST:-koha_${KOHA_INSTANCE:-kohadev}}
 ```
 

@@ -33,7 +33,7 @@ A new section was appended at the end of the script (after certificate generatio
 3. **Generates the bcrypt hash** by running OpenSearch's own `hash.sh` tool in a temporary container. The password is passed via an environment variable (not a command-line argument) so that special characters (`@`, `#`, `$`, etc.) are handled safely without any shell quoting issues:
 
 ```bash
-ADMIN_PASS="$OPENSEARCH_INITIAL_ADMIN_PASSWORD" \
+ADMIN_PASS=<read-from-local-env>
 docker run --rm \
   -e "ADMIN_PASS=${OPENSEARCH_INITIAL_ADMIN_PASSWORD}" \
   "opensearchproject/opensearch:${OS_VER}" \

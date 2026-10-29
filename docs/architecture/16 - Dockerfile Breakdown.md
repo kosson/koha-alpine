@@ -4,6 +4,8 @@ tags: [dockerfile, ubuntu-24.04, layers, apt, koha-common, nodejs, yarn, cypress
 ---
 # Dockerfile Breakdown
 
+> **Historical Ubuntu image analysis.** The current Alpine image is built by `Dockerfile-Alpine`; this file does not describe its packages or layers. See [[18 - Alpine Runtime Architecture]].
+
 Layer-by-layer analysis of the Koha container image.
 
 ## File

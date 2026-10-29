@@ -5,10 +5,10 @@ services:
       - "--sql-mode=${DB_SQL_MODE:-STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION}"
       - "--ssl=ON"
     environment:
-      MYSQL_ROOT_PASSWORD: ${KOHA_DB_ROOT_PASSWORD:-password}
+      MYSQL_ROOT_PASSWORD: ${KOHA_DB_ROOT_PASSWORD:?KOHA_DB_ROOT_PASSWORD must be set}
       MYSQL_DATABASE: koha_${KOHA_INSTANCE:-kohadev}
       MYSQL_USER: koha_${KOHA_INSTANCE:-kohadev}
-      MYSQL_PASSWORD: ${KOHA_DB_PASSWORD:-password}
+      MYSQL_PASSWORD: ${KOHA_DB_PASSWORD:?KOHA_DB_PASSWORD must be set}
     volumes:
       - koha-db-data:/var/lib/mysql
       - ./files-alpine/mariadb-ssl:/etc/mysql/ssl:ro
@@ -37,7 +37,7 @@ services:
           exec rabbitmq-server
     environment:
         RABBITMQ_DEFAULT_USER: ${KOHA_RABBITMQ_USER:-koha}
-        RABBITMQ_DEFAULT_PASS: ${KOHA_RABBITMQ_PASS:-password}
+        RABBITMQ_DEFAULT_PASS: ${KOHA_RABBITMQ_PASS:?KOHA_RABBITMQ_PASS must be set}
         RABBITMQ_DEFAULT_VHOST: ${KOHA_RABBITMQ_VHOST:-koha_${KOHA_INSTANCE:-kohadev}}
     volumes:
         - koha-rabbitmq-data:/var/lib/rabbitmq
@@ -89,7 +89,7 @@ services:
       - /cover_db
       - /tmp
     env_file:
-      - ${KOHA_CONTAINER_ENV_FILE:-env/.env}
+      - ${KOHA_CONTAINER_ENV_FILE:-${KOHA_ENV_FILE:-env/.env}}
     environment:
         COVERAGE: ${COVERAGE:-}
         CPAN: ${CPAN:-no}
@@ -115,7 +115,7 @@ services:
         USE_EXISTING_DB: ${USE_EXISTING_DB:-}
         ALPINE_BOOTSTRAP_PROFILE: ${ALPINE_BOOTSTRAP_PROFILE:-resume}
         RUN_DB_POPULATION_ON_EXISTING_DB: ${RUN_DB_POPULATION_ON_EXISTING_DB:-}
-        KOHA_DB_ROOT_PASSWORD: ${KOHA_DB_ROOT_PASSWORD:-password}
+        KOHA_DB_ROOT_PASSWORD: ${KOHA_DB_ROOT_PASSWORD:?KOHA_DB_ROOT_PASSWORD must be set}
         KOHA_DB_USE_TLS: ${KOHA_DB_USE_TLS:-yes}
         KOHA_DB_TLS_CA_CERTIFICATE: ${KOHA_DB_TLS_CA_CERTIFICATE:-/etc/mysql/ssl/ca-cert.pem}
         KOHA_DB_TLS_CLIENT_CERTIFICATE: ${KOHA_DB_TLS_CLIENT_CERTIFICATE:-}
@@ -123,7 +123,7 @@ services:
         MESSAGE_BROKER_HOST: ${MESSAGE_BROKER_HOST:-rabbitmq}
         MESSAGE_BROKER_PORT: ${MESSAGE_BROKER_PORT:-61613}
         MESSAGE_BROKER_USER: ${KOHA_RABBITMQ_USER:-koha}
-        MESSAGE_BROKER_PASS: ${KOHA_RABBITMQ_PASS:-password}
+        MESSAGE_BROKER_PASS: ${KOHA_RABBITMQ_PASS:?KOHA_RABBITMQ_PASS must be set}
         MESSAGE_BROKER_VHOST: ${KOHA_RABBITMQ_VHOST:-koha_${KOHA_INSTANCE:-kohadev}}
         KOHA_PUBLIC_PORT: ${KOHA_PUBLIC_PORT:-80}
     ulimits:

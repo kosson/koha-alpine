@@ -4,6 +4,8 @@ tags: [demo-data, marc, marc21, insert_data.pl, opensearch-index, z3950, patron-
 ---
 # Demo Data & MARC Import
 
+> **Historical Ubuntu workflow.** Paths and commands may refer to the prior container layout; check the current entrypoint and `stack-alpine.sh` before use.
+
 How sample data is loaded and how to manage MARC records.
 ## Demo Data Loading
 
@@ -196,7 +198,7 @@ SELECT COUNT(*) FROM borrowers;
 
 ```
 Username: librarian
-Password: librarian
+Password: <set-in-local-env>
 (Admin/superlibrarian account)
 ```
 ## Pitfalls

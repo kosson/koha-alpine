@@ -10,7 +10,11 @@ KOHADEVBOX=${KOHADEVBOX:-/kohadevbox/koha}
 KOHA_USER=${KOHA_USER:-kohadev}
 DB_HOST=${DB_HOST:-db}
 DB_USER=koha_${KOHASITE}
-DB_PASS=${MYSQL_PASS:-password}
+DB_PASS=${KOHA_DB_PASSWORD:-${MYSQL_PASS:-}}
+if [ -z "${DB_PASS}" ]; then
+  echo "ERROR: KOHA_DB_PASSWORD must be set in the local environment." >&2
+  exit 1
+fi
 DB_NAME=koha_${KOHASITE}
 
 export KOHA_CONF=${KOHACONF}

@@ -257,7 +257,7 @@ The `--use-db` path in `files-alpine/scripts/koha-create` has two distinct conne
    [client]
    host     = db
    user     = root
-   password = ...
+   password = <set-in-local-env>
    ssl      = off
    skip-ssl
    ```

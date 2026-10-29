@@ -4,6 +4,8 @@ tags: [tls, security, certificates, mtls, traefik, letsencrypt, cap-add, secrets
 ---
 # TLS & Security
 
+> **Historical Ubuntu security review.** This page includes legacy findings and configurations that may have changed. Use the current Compose files and Phase E/Phase F migration records for Alpine runtime controls; see [[18 - Alpine Runtime Architecture]].
+
 Two independent TLS layers operate in this stack.
 
 ## Layer 1: OpenSearch Cluster TLS (mTLS)
@@ -141,18 +143,18 @@ sync_koha_opensearch_credentials() {
   # Source of truth: OpenSearch-3.6/.env
   # Target: env/.env (ELASTIC_OPTIONS userinfo)
 
-  OPENSEARCH_INITIAL_ADMIN_PASSWORD=$(python3 -c "import re; ...")
+  OPENSEARCH_INITIAL_ADMIN_PASSWORD=<set-in-local-env>
   
   # Sync Koha DB password
-  KOHA_DB_ROOT_PASSWORD=$(grep -E '^KOHA_DB_ROOT_PASSWORD=' OpenSearch-3.6/.env | cut -d= -f2)
+  KOHA_DB_ROOT_PASSWORD=<set-in-local-env>
   export KOHA_DB_ROOT_PASSWORD
 
   # Sync OpenSearch admin password
-  KOHA_DB_PASSWORD=$(grep -E '^OPENSEARCH_INITIAL_ADMIN_PASSWORD=' OpenSearch-3.6/.env | cut -d= -f2)
+  KOHA_DB_PASSWORD=<set-in-local-env>
   export KOHA_DB_PASSWORD
 
   # Sync ELASTIC_OPTIONS with Python regex
-  ELASTIC_OPTIONS=$(python3 -c "import re, os; ...")
+  ELASTIC_OPTIONS=<configure-with-local-credentials>
 }
 ```
 

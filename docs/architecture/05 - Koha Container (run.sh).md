@@ -4,6 +4,8 @@ tags: [run.sh, entrypoint, initialization, crlf-normalization, package-installat
 ---
 # Koha Container Entrypoint (run.sh)
 
+> **Historical Ubuntu entrypoint.** The current Alpine image uses `files-alpine/run.sh`; this page describes a different runtime and must not be used as its startup contract. See [[18 - Alpine Runtime Architecture]].
+
 Location: `/home/kosson/Documents/koha-docker/files/run.sh` (585 lines)
 This is the container's CMD: `["/bin/bash", "/kohadevbox/run.sh"]`
 

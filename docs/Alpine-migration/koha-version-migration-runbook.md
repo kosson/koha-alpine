@@ -1,241 +1,158 @@
-<!-- markdownlint-disable MD032 MD029 -->
-
-# Koha Version Migration Runbook (Container to Container)
-
-## Purpose
-
-This runbook is for migrating a running Koha stack to a newer Koha container version (including Ubuntu -> Alpine image changes) while preserving data and allowing rollback.
-
-It assumes this repository layout and tooling (`stack.sh`, compose files, env files).
-
----
-
-## Safety Model
-
-The migration is safe if all 3 are true:
-
-1. You have a fresh backup bundle (`./stack.sh backup`).
-2. You start the new container with existing DB reuse (`--no-fresh-db`).
-3. You do not run `reset` during the migration window.
-
----
-
-## Inputs You Must Decide Before Start
-
-- Target Koha version strategy:
-  - `KOHA_GIT_CLONE_MODE=tag` with a new `KOHA_GIT_TAG`, or
-  - `KOHA_GIT_CLONE_MODE=branch` with a new `KOHA_GIT_BRANCH`.
-- Target image/base change (if any):
-  - `KOHA_IMAGE_TAG` or Dockerfile updates.
-- Maintenance window length (recommended: enough for DB schema upgrade + search rebuild checks).
-
----
-
-## Pre-Checks (Mandatory)
-
-Run from `koha-docker/`.
-
-1. Confirm current stack status:
-
-```bash
-./stack.sh status
-```
-
-2. Confirm no destructive action is pending:
-- Do not run `./stack.sh reset`.
-- Do not start without `--no-fresh-db` during migration testing.
-
-3. Confirm DB root password consistency in `env/.env`:
-- `KOHA_DB_ROOT_PASSWORD` must match the existing `koha-db-data` volume.
-
-4. Confirm instance naming consistency in `env/.env`:
-- `KOHA_INSTANCE` unchanged unless this is an intentional new-instance migration.
-
-5. Confirm OpenSearch credentials alignment:
-- `OPENSEARCH_INITIAL_ADMIN_PASSWORD` in `env/.env` matches OpenSearch config.
-
----
-
-## Backup (Mandatory)
-
-Create a timestamped recovery artifact immediately before any version change:
-
-```bash
-./stack.sh backup
-```
-
-Optional explicit path:
-
-```bash
-./stack.sh backup --output backups/pre-upgrade-$(date -u +%Y%m%dT%H%M%SZ).tar.gz
-```
-
-Expected backup contents:
-- `env/.env`
-- `traefik/.env`
-- `OpenSearch-3.6/.env`
-- DB dump (`koha_${KOHA_INSTANCE}.sql.gz`)
-
----
-
-## Migration Procedure (Primary Path)
-
-## Phase A: Prepare target version
-
-1. Update version selectors in `env/.env`:
-- `KOHA_GIT_CLONE_MODE`
-- `KOHA_GIT_TAG` or `KOHA_GIT_BRANCH`
-- optional `KOHA_IMAGE_TAG`
-
-2. Build target Koha container image:
-
-```bash
-./stack.sh build --build-koha
-```
-
-## Phase B: Start using existing database
-
-Start with DB preservation enabled:
-
-```bash
-./stack.sh start --no-fresh-db
-```
-
-Why this flag is mandatory:
-- It exports `USE_EXISTING_DB=yes`, causing the Koha startup path to reuse the existing populated schema.
-
-## Phase C: Observe startup
-
-Follow logs:
-
-```bash
-./stack.sh logs
-```
-
-Look for:
-- existing DB reuse path active,
-- `do_all_you_can_do.pl` completes,
-- ready banner appears.
-
----
-
-## Post-Migration Validation Checklist
-
-## A. Access and login
-
-1. OPAC page reachable.
-2. Staff interface reachable.
-3. Superlibrarian/staff login works.
-
-## B. Core function sanity
-
-1. Search returns expected records.
-2. Patron lookup works.
-3. Circulation action (test checkout/checkin) works in test environment.
-
-## C. Background processing
-
-1. Worker services start without fatal loops.
-2. RabbitMQ STOMP reachability warnings are absent or understood.
-
-## D. Schema/version sanity
-
-1. No repeated schema-upgrade crash loops in logs.
-2. No immediate startup exit after `do_all_you_can_do.pl`.
-
-## E. Search backend sanity (if enabled)
-
-1. OpenSearch cluster healthy.
-2. No persistent ES auth errors.
-3. If search issues appear, trigger a controlled index rebuild.
-
----
-
-## Optional: Controlled Rebuild of Search Indexes
-
-If Koha is up but search is inconsistent after upgrade:
-
-```bash
-docker exec -it koha-docker-koha-1 bash -lc "koha-shell ${KOHA_INSTANCE} -p -c 'perl /kohadevbox/koha/misc/search_tools/rebuild_elasticsearch.pl'"
-```
-
-Use only after confirming DB migration itself is healthy.
-
----
-
-## Rollback Runbook (Fast Path)
-
-Use this if validation fails and you must return to pre-upgrade state quickly.
-
-1. Stop current services:
-
-```bash
-./stack.sh stop
-```
-
-2. Restore from the backup created before migration:
-
-```bash
-./stack.sh restore backups/<your-pre-upgrade-backup>.tar.gz
-```
-
-3. Confirm restored stack health:
-
-```bash
-./stack.sh status
-./stack.sh logs
-```
-
-Rollback result:
-- env files restored,
-- DB restored,
-- stack brought up with existing data path.
-
----
-
-## Rollback Decision Triggers (Use Immediately)
-
-Rollback is recommended if any of the following persist after one focused fix attempt:
-
-1. Koha container repeatedly exits during startup.
-2. Schema/upgrade step fails and blocks service readiness.
-3. Authentication failures prevent operational use.
-4. Critical staff operations unavailable.
-
----
-
-## Anti-Patterns (Do Not Do During Migration)
-
-1. Running `./stack.sh start` without `--no-fresh-db` on a populated environment.
-2. Running `./stack.sh reset` unless you intentionally want full data loss.
-3. Changing `KOHA_INSTANCE` mid-upgrade without a separate data migration plan.
-4. Rotating DB root password without coordinated volume/password handling.
-
----
-
-## Special Notes for Ubuntu -> Alpine Image Migration
-
-Data-preservation steps remain identical:
-
-1. Backup.
-2. Build new image.
-3. Start with `--no-fresh-db`.
-4. Validate.
-5. Roll back via restore if needed.
-
-What changes in Alpine migration is runtime compatibility of helper/tooling, not the core migration payload.
-
----
-
-## Change Record Template (Fill During Execution)
-
-- Date/UTC:
+# Koha Migration and Upgrade Runbook
+
+This repository's active orchestration is `stack-alpine.sh`, with
+`docker-compose-alpinekoha.yml` and `docker-compose.prod.yml`. This runbook
+supersedes older `stack.sh` examples.
+
+**Important:** upgrading an Alpine installation and migrating an existing
+Ubuntu installation are different operations. Neither should be attempted in
+production until the acceptance gates in
+[End-to-end migration acceptance](./End-to-end-migration-acceptance.md) have
+passed for the target release.
+
+## Choose the procedure
+
+| Operation | Procedure |
+|---|---|
+| Build/start a fresh Alpine test environment | [README Quick Start](../../README.md) using an explicitly isolated Compose project and synthetic env. |
+| Upgrade an existing Alpine production instance | [Phase F release, backup, and rollback guide](./Phase-F-release-operations.md). |
+| Migrate a real existing Ubuntu Koha database to Alpine | First complete the isolated rehearsal described under [G4](./End-to-end-migration-acceptance.md#g4-rehearse-migration-from-ubuntu-g4). This runbook does not authorize direct production migration. |
+| Restore or rehearse disaster recovery | Complete G5/G6 in the acceptance gates and use the Phase F guide; the built-in archive is not a full-volume backup. |
+
+## Non-negotiable safety controls
+
+1. Never point a rehearsal at production containers, project names, networks, or
+   volumes. Use a protected data copy, unique project name, dedicated ports,
+   and verified-absent named volumes.
+2. Do not use `stack-alpine.sh reset`, `docker compose down -v`, or volume-prune
+   commands during upgrade, migration, or restore.
+3. Verify `KOHA_PROD_PROJECT` and the actual DB/RabbitMQ volume names before
+   every start. The default production project name changes with Koha version.
+4. Do not use the fresh-database default for an existing database. Existing-data
+   starts require `--no-fresh-db`; this flag does not by itself prove a
+   cross-distribution migration is safe.
+5. Preserve the source environment and database until migration and rollback
+   acceptance are complete.
+6. Treat environment files and backup archives as secrets. Do not put real
+   credentials in tracked `env/.env`.
+
+## Phase A — Scope and record source state
+
+Before any rehearsal:
+
+- Record source Koha version/ref, image digest, OS/container versions, MariaDB
+  version, instance name, enabled integrations, and source Compose project.
+- Inventory the database and non-database state required by this installation:
+  configuration, attachments, TLS material, RabbitMQ state, OpenSearch
+  indexes/snapshots, custom templates/plugins, and host-mounted files.
+- Agree on feature acceptance, maintenance window, maximum recovery time, and
+  acceptable data-loss window.
+- Confirm backup credentials and all recovery material are available to the
+  authorized operator.
+- Resolve the credential hygiene gate before copying configs or placing any
+  secrets in CI or shared artifacts.
+
+## Phase B — Prepare an isolated rehearsal
+
+1. Create a dedicated test host or isolated project with unique ports and
+   network. Confirm the intended project-scoped DB and RabbitMQ volumes do not
+   exist; record their exact names.
+2. Make a protected copy of the source database using an owner-approved,
+   database-consistent export procedure. Do not modify the source installation.
+3. Sanitize personal data when feasible while preserving representative Koha
+   schema and workflow relationships. Protect unsanitized copies as production
+   data.
+4. Build the exact pinned production image and record its digest, requested
+   Koha ref, resolved source commit, base image versions, and build logs.
+5. Stage required environment/configuration and non-database assets separately.
+   Do not assume the repository backup archive contains them.
+
+## Phase C — Import and start the Alpine target
+
+The Ubuntu-to-Alpine method must be written and reviewed based on the rehearsal.
+Do not assume `stack-alpine.sh restore` can migrate an Ubuntu environment:
+that command restores this repository's env files and a MariaDB dump, resets
+the configured database, and starts the Alpine stack.
+
+For an existing Alpine database during a planned version upgrade, use the
+supported production procedure in the Phase F guide. For the one-time Ubuntu
+migration rehearsal, the operator procedure must explicitly specify:
+
+- how the copied database is created/imported into the isolated Alpine
+  MariaDB service;
+- how DB credentials, privileges, TLS certificates, and Koha config are
+  reconciled;
+- how required host files and external-service state are restored;
+- how the exact target project and volumes are selected; and
+- how Koha schema upgrade is triggered and monitored.
+
+Start the target only after confirming the isolated project, target image
+digest, environment, and volumes. For a populated DB, use the existing-data
+startup behavior; do not run a fresh bootstrap or reset. Record logs and stop
+the test if the schema-upgrade path is ambiguous or destructive.
+
+## Phase D — Acceptance checks
+
+Complete and record every required check in the
+[acceptance matrix](./End-to-end-migration-acceptance.md):
+
+- database readiness, expected Koha schema version, and agreed data
+  reconciliation queries;
+- staff authentication and OPAC access;
+- catalogue search, create/edit, patron lookup, controlled circulation;
+- background worker and broker behavior;
+- OpenSearch auth/health/index/search when enabled;
+- Z39.50 query and result parsing on the pinned production image;
+- TLS verification and expected access restrictions;
+- startup health, logs, restart, and graceful shutdown.
+
+HTTP 200 on the home pages or a successful fresh bootstrap does not satisfy
+these checks.
+
+## Phase E — Backup, restore, and rollback rehearsal
+
+Use the Phase F release guide and acceptance G5/G6. Before accepting recovery:
+
+- test whether writes must be paused to obtain an application-consistent backup;
+- restore the database and matching release configuration to separate test
+  volumes;
+- independently recover RabbitMQ, OpenSearch if required, certificates/private
+  keys, and host-mounted files omitted from the built-in archive;
+- restore/start the previous image and verify its DB compatibility;
+- record recovery duration, lost-write boundary, and any manual steps.
+
+Do not perform an image-only rollback after a database schema upgrade unless
+that exact compatibility has separately been established and accepted.
+
+## Evidence and close-out
+
+Attach to the dated tracker record:
+
+- source and target release/ref/digest and resolved Koha commit;
+- test project name and DB/RabbitMQ volume names (never credentials);
+- sanitized backup/export provenance and integrity checks;
+- build/CI run identifiers, logs, workflow results, test cases and outcomes;
+- before/after database reconciliation and feature acceptance results;
+- restore/rollback results, recovery duration, and unresolved limitations;
+- service owner decision and explicit scope exclusions.
+
+End-to-end migration is complete only when all required gates pass. Until then,
+the accepted statement is: **Alpine image implementation is validated for the
+recorded release; migration of an existing Ubuntu installation and production
+recovery are pending rehearsal and owner approval.**
+
+## Operator execution record
+
+- Date / UTC:
 - Operator:
-- Source version/image:
-- Target version/image:
-- Backup archive path:
-- Start time:
-- End time:
-- Validation result: pass/fail
-- Rollback performed: yes/no
-- Notes:
+- Source Koha version / image digest:
+- Target Koha ref / resolved commit / image digest:
+- Isolated project name:
+- Isolated DB and RabbitMQ volume names:
+- Backup/export reference (no secrets):
+- CI run reference:
+- Feature test results:
+- Z39.50 endpoint/result:
+- Restore/rollback result and recovery duration:
+- Unresolved deviations:
+- Owner sign-off:

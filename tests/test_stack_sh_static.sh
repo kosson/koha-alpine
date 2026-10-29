@@ -27,6 +27,14 @@ assert_contains() {
         not_ok "${desc} (pattern not found: ${pattern})"
     fi
 }
+assert_not_contains() {
+    local desc="$1"; local pattern="$2"
+    if grep -qF -- "${pattern}" "${STACK_SH}"; then
+        not_ok "${desc} (unexpected pattern found: ${pattern})"
+    else
+        ok "${desc}"
+    fi
+}
 
 echo "TAP version 14"
 echo "# Static checks on stack-alpine.sh backup/restore support"
@@ -47,6 +55,13 @@ assert_contains "stack script probes for populated DB before no-fresh-db shortcu
 assert_contains "stack script falls back when no-fresh-db hits an empty DB" 'falling back to fresh bootstrap'
 assert_contains "stack script checks for bootstrap completion marker" 'koha_bootstrap_marker_present()'
 assert_contains "bootstrap marker is cleared on reset" 'rm -f "${BOOTSTRAP_MARKER}"'
+assert_contains "production project name can be kept stable across Koha releases" 'KOHA_COMPOSE_PROJECT="${KOHA_PROD_PROJECT}"'
+assert_contains "stable production project names are validated" 'KOHA_PROD_PROJECT}" =~ ^[a-z0-9][a-z0-9_-]*$'
+assert_contains "stable production project name reloads from runtime config" 'KOHA_PROD_PROJECT="$(_env_val "${KOHA_ENV_FILE}" KOHA_PROD_PROJECT "${KOHA_PROD_PROJECT}")"'
+assert_contains "version-specific production project remains the default" 'KOHA_COMPOSE_PROJECT="koha-prod-${_slug}"'
+assert_contains "main Koha env file can be selected outside the repository" 'KOHA_ENV_FILE="${KOHA_ENV_FILE:-${SCRIPT_DIR}/env/.env}"'
+assert_contains "container env file defaults to selected host env file" 'KOHA_CONTAINER_ENV_FILE="${KOHA_CONTAINER_ENV_FILE:-$(_env_val "${KOHA_ENV_FILE}" KOHA_CONTAINER_ENV_FILE "${KOHA_ENV_FILE}")}"'
+assert_not_contains "startup does not rewrite tracked SYNC_REPO configuration" 'perl -pi -e "s|^SYNC_REPO='
 
 echo ""
 echo "1..${_N}"

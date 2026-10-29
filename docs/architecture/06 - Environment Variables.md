@@ -4,6 +4,8 @@ tags: [environment, variables, .env, credentials, secrets, derived-variables, do
 ---
 # Environment Variables
 
+> **Historical Ubuntu configuration reference.** Names, defaults, and secret handling below may differ from the Alpine implementation. Check `env/.env.example`, the Compose files, and `stack-alpine.sh`; see [[18 - Alpine Runtime Architecture]].
+
 Three `.env` files control the entire stack. Each has a different scope.
 
 ## Main Config: `env/.env`

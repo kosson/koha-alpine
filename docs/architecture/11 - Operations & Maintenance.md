@@ -4,6 +4,8 @@ tags: [operations, maintenance, start, stop, restart, reset, logs, image-managem
 ---
 # Operations & Maintenance
 
+> **Historical Ubuntu operations reference.** These examples use the old `stack.sh` entry point and may be destructive or stale. Use `stack-alpine.sh` and the [Phase F release guide](../Alpine-migration/Phase-F-release-operations.md) for current operations.
+
 Daily operations for the Koha Docker stack.
 
 ## Startup

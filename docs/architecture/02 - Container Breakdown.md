@@ -4,6 +4,8 @@ tags: [containers, koha, mariadb, memcached, opensearch, dashboards, traefik, re
 ---
 # Container Breakdown
 
+> **Historical Ubuntu architecture.** Container names, images, mounts, capabilities, and services below may not match the current Alpine stack. See [[18 - Alpine Runtime Architecture]] and the repository Compose files for current behavior.
+
 Detailed breakdown of every container in the stack.
 ## koha (Main Application Container)
 

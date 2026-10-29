@@ -189,13 +189,13 @@ Updated the following files:
 1. `OpenSearch-3.6/.env`
 
 ```dotenv
-OPENSEARCH_INITIAL_ADMIN_PASSWORD=test@Cici24#ANA
+OPENSEARCH_INITIAL_ADMIN_PASSWORD=<set-in-local-env>
 ```
 
 2. `OpenSearch-3.6/assets/dashboards/opensearch_dashboards.yml`
 
 ```yaml
-opensearch.password: "test@Cici24#ANA"
+opensearch.password: <set-in-local-env>
 ```
 
 3. `OpenSearch-3.6/assets/opensearch/config/os01/opensearch-security/internal_users.yml`

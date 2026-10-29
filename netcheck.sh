@@ -19,7 +19,10 @@ set -uo pipefail
 # Paths
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-KOHA_ENV_FILE="${SCRIPT_DIR}/env/.env"
+KOHA_ENV_FILE="${KOHA_ENV_FILE:-${SCRIPT_DIR}/env/.env}"
+if [[ "${KOHA_ENV_FILE}" != /* ]]; then
+  KOHA_ENV_FILE="$(cd "$(dirname "${KOHA_ENV_FILE}")" && pwd)/$(basename "${KOHA_ENV_FILE}")"
+fi
 OS_ENV_FILE="${SCRIPT_DIR}/OpenSearch-3.6/.env"
 TRAEFIK_ENV_FILE="${SCRIPT_DIR}/traefik/.env"
 OS_SSL_DIR="${SCRIPT_DIR}/OpenSearch-3.6/assets/ssl"
@@ -70,20 +73,20 @@ if [[ -f "${KOHA_ENV_FILE}" ]]; then
   KOHA_INTRANET_SUFFIX="$(_env_val "${KOHA_ENV_FILE}" KOHA_INTRANET_SUFFIX -intra)"
   KOHA_OPAC_PORT="$(_env_val "${KOHA_ENV_FILE}" KOHA_OPAC_PORT    8080)"
   KOHA_INTRANET_PORT="$(_env_val "${KOHA_ENV_FILE}" KOHA_INTRANET_PORT 8081)"
-  KOHA_DB_PASS="$(_env_val   "${KOHA_ENV_FILE}" KOHA_DB_ROOT_PASSWORD password)"
-  KOHA_DB_PASS="${KOHA_DB_PASS:-$(_env_val "${KOHA_ENV_FILE}" KOHA_DB_PASSWORD password)}"
+  KOHA_DB_PASS="$(_env_val   "${KOHA_ENV_FILE}" KOHA_DB_ROOT_PASSWORD "")"
+  KOHA_DB_PASS="${KOHA_DB_PASS:-$(_env_val "${KOHA_ENV_FILE}" KOHA_DB_PASSWORD "")}"
 else
   KOHA_INSTANCE="kohadev"; KOHA_DOMAIN=".myDNSname.org"
   KOHA_INTRANET_SUFFIX="-intra"; KOHA_OPAC_PORT="8080"; KOHA_INTRANET_PORT="8081"
-  KOHA_DB_PASS="password"
+  KOHA_DB_PASS=""
 fi
 
 if [[ -f "${OS_ENV_FILE}" ]]; then
-  OS_ADMIN_PASS="$(_env_val "${OS_ENV_FILE}" OPENSEARCH_INITIAL_ADMIN_PASSWORD changeme)"
+  OS_ADMIN_PASS="$(_env_val "${OS_ENV_FILE}" OPENSEARCH_INITIAL_ADMIN_PASSWORD "")"
 elif [[ -f "${KOHA_ENV_FILE}" ]]; then
-  OS_ADMIN_PASS="$(_env_val "${KOHA_ENV_FILE}" OPENSEARCH_INITIAL_ADMIN_PASSWORD changeme)"
+  OS_ADMIN_PASS="$(_env_val "${KOHA_ENV_FILE}" OPENSEARCH_INITIAL_ADMIN_PASSWORD "")"
 else
-  OS_ADMIN_PASS="changeme"
+  OS_ADMIN_PASS=""
 fi
 
 TRAEFIK_HTTP_PORT="$(_env_val  "${TRAEFIK_ENV_FILE}" TRAEFIK_HTTP_PORT  80)"
@@ -238,7 +241,7 @@ if [[ "${OS_HTTP_CODE}" == "200" ]]; then
   fi
 else
   case "${OS_HTTP_CODE}" in
-    401) fail "OpenSearch returned 401 Unauthorized — check OPENSEARCH_INITIAL_ADMIN_PASSWORD in env files (used: ${OS_ADMIN_PASS:0:4}…)" ;;
+    401) fail "OpenSearch returned 401 Unauthorized — check OPENSEARCH_INITIAL_ADMIN_PASSWORD in the local environment files." ;;
     000) fail "OpenSearch HTTPS endpoint unreachable (curl returned 000) — container may be starting or TLS handshake failed" ;;
     *)   fail "OpenSearch returned HTTP ${OS_HTTP_CODE:-<no response>}" ;;
   esac
