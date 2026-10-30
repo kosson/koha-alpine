@@ -18,7 +18,7 @@ That status needs qualification:
 5. An earlier review reported merge-conflict markers in configuration, but the current inspection found no conflict markers or duplicate keys in `env/.env`. The tracked environment and OpenSearch auth templates previously contained credential-capable values; those values were scrubbed from the current worktree, and the owner reports potentially active credentials have been rotated. Historical Git/remotes still need an owner-approved disposition before G0 can pass. `OpenSearch-3.6/.env` remains ignored and local.
 6. Re-running Phase 4 guardrails exposed drift in `Dockerfile-Alpine` and `koha-worker`: the development image did not install its Alpine command overlays or `busybox-extras`, and the worker wrapper missed Koha's current `misc/workers` path and queue options. Those gaps were restored and exercised in the Phase D image.
 
-The Alpine implementation has substantial evidence for the recorded pinned release: production and development images started in separate isolated projects, a fresh development database bootstrapped and passed Plack/API and browser checks, lifecycle checks passed, and runtime reduction/least-privilege gates passed. Phase F release guidance is implemented. **End-to-end migration from an existing Ubuntu installation is not complete or accepted.** The new CI-independent local release-validation procedure, production feature acceptance (including Z39.50), an Ubuntu-data migration rehearsal, a consistent backup/restore and rollback rehearsal, secret remediation, and owner sign-off remain open. See the [end-to-end acceptance gates](./End-to-end-migration-acceptance.md).
+The Alpine implementation has substantial evidence for the recorded pinned release: production and development images started in separate isolated projects, a fresh development database bootstrapped and passed Plack/API and browser checks, lifecycle checks passed, runtime reduction/least-privilege gates passed, and G3 production feature acceptance passed on 2026-10-30. **End-to-end migration from an existing Ubuntu installation is not complete or accepted.** G2's pinned-release compatibility/Z39.50 audit, G4's Ubuntu-data rehearsal, G5's backup/restore/rollback rehearsal, G6's volume-identity/cutover proof, G7's operations readiness, G8's independent operator walkthrough, and G9's owner sign-off remain open. See the [end-to-end acceptance gates](./End-to-end-migration-acceptance.md).
 
 ## Evidence-based implementation map
 
@@ -43,7 +43,7 @@ The Alpine implementation has substantial evidence for the recorded pinned relea
 | 3 — Dual-mode templating / Gitify removal | Project-owned templates and vhost rendering replace runtime Gitify behavior. | Keep the test assertions aligned to the actual no-Gitify contract. |
 | 4 — POSIX admin tools / shim removal | Alpine rewrites exist for selected lifecycle commands; image overlay wiring and worker queue/path compatibility are restored. | The `koha-shell` config/`PERL5LIB` check passed in Phase D; broader compatibility coverage remains part of subsequent hardening. |
 | 5 — OpenRC, watchdog, cron | OpenRC wrappers, periodic tasks, and a SIGTERM-aware watchdog are installed in the image. | Phase D runtime gates passed: Plack and worker recovery, controlled periodic work, and graceful shutdown with no orphaned container processes. |
-| Dev/production split | Compose overlay and `stack-alpine.sh` mode selection exist. | Pinned-image and fresh-start behavior passed for the recorded release. Hosted CI, production feature acceptance, same-version upgrade rehearsal, Ubuntu-data migration, backup/restore, and owner sign-off remain open. |
+| Dev/production split | Compose overlay and `stack-alpine.sh` mode selection exist. | Pinned-image and fresh-start behavior passed for the recorded release; G3 production feature acceptance passed on 2026-10-30. G2 compatibility/Z39.50, same-version upgrade rehearsal, Ubuntu-data migration, backup/restore, and owner sign-off remain open. |
 
 ## Decisions and safety rules
 
@@ -137,8 +137,10 @@ end-to-end acceptance gates remain open until their evidence is recorded:
   builds, test results, Koha commit, image IDs/digests, and tool versions.
 - [ ] G2: Rebuild/run the candidate production image and execute a successful
   end-to-end Z39.50 query/result parse.
-- [ ] G3: Pass agreed authenticated Koha workflows on production mode, including
-  catalogue, patron, circulation, background job, and enabled search paths.
+- [x] G3: Pass production-mode login, catalogue create/edit, patron, circulation,
+  background-job, OpenSearch TLS/auth/search, and MARCXML import checks. Evidence:
+  isolated project `koha-alpine-test-g3tls`, 16/16 checks, 2026-10-30; see the
+  acceptance matrix and dated tracker addendum.
 - [ ] G4: Rehearse migration of a protected representative Ubuntu data copy in
   an isolated project and reconcile schema/data/operations.
 - [ ] G5: Rehearse backup, restore, rollback, and recovery of assets excluded
