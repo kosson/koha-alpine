@@ -52,6 +52,8 @@ assert_contains "dev path calls build-alpine-package.sh" '/usr/local/bin/build-a
 assert_not_contains "no cp_alpine_files.pl fallback remains" "cp_alpine_files.pl" "${HELPER_SH}"
 assert_not_contains "no cp_debian_files.pl fallback remains" "cp_debian_files.pl" "${HELPER_SH}"
 assert_contains "Koha htdocs destinations exist before manifest staging" "make_path('/usr/share/koha/intranet/htdocs', '/usr/share/koha/opac/htdocs');" "${PACKAGE_HELPER}"
+assert_contains "koha-shell packaged PERL5LIB includes Alpine CPAN modules and Koha source" "/kohadevbox/koha/lib" "${PACKAGE_HELPER}"
+assert_contains "production Elasticsearch rebuild tools are staged in the packaged binary tree" "/usr/share/koha/bin/search_tools" "${PACKAGE_HELPER}"
 
 # --- Dockerfile checks ---
 assert_not_contains "koha source directory not copied into build context" "COPY koha /tmp/koha-build-src" "${DOCKERFILE}"

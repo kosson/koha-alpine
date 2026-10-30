@@ -331,3 +331,159 @@ and runner were removed. The unrelated existing `koha-docker-db-1` was not
 modified. Test-suite baseline from the committed implementation remains 289
 passed, 0 failed, 29 expected skips; this addendum introduces no tracked code
 changes.
+
+## G2 addendum — pinned-image manifest audit and Z39.50 (PASS)
+
+**Date:** 2026-10-30
+**Branch/base revision:** `phase`, `1e8b840`
+**Koha ref/source commit:** `v26.05.01-1`,
+`dacce7d3fc15860d26d06444c1f5c9a2d0d6a4a9`
+**Candidate image:** `koha-alpine-acceptance:26.05.01-1-g2`, local image ID
+`sha256:336152572836fb23e96efc494e22c5727110e1e0985eefc43946c03208263df7`
+
+The image was built from the worktree based on `1e8b840`; it was dirty only
+for the hourly cron correction and its regression assertion described below.
+Docker 28.1.1 and Buildx 0.23.0 were used. The candidate contains YAZ 5.34.0,
+loads `Net::Z3950::ZOOM`, and links
+the ZOOM extension to `libyaz.so.5`. Its production `PATH` is
+`/opt/koha-perl/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin`.
+The image's `/usr/share/koha/source-revision` contains the Koha commit above.
+All four shipped Alpine command overlays (`koha-create`, `koha-plack`,
+`koha-worker`, and `koha-functions.sh`) had byte-for-byte matching SHA-256
+hashes against their source files in `files-alpine/scripts/`; the build
+installs them after Debian manifest staging.
+
+### Manifest and runtime disposition
+
+- `koha-common.install` and `koha-core.install` both describe Debian package
+  payloads under `debian/tmp/` and DocBook output under `debian/tmp_docbook/`.
+  Those generated paths are not present in the Koha source checkout used by
+  this Docker build. `scripts/build-alpine-package.sh` therefore stages the
+  source-owned templates, htdocs, Perl library, Zebra/Z39.50 configuration,
+  and admin scripts directly. These expected destinations were present in the
+  built image, and all manifest `koha-*` command paths were executable and on
+  the production `PATH`.
+- The Alpine-owned runtime path is `files-alpine/run.sh`, the Alpine helper
+  library, OpenRC service wrappers, and `/etc/periodic` jobs. The entrypoint
+  uses the Alpine `koha-create`, Plack and worker overlays; `koha-shell` is
+  used by supported task execution and was previously verified with the
+  production `PERL5LIB` and configuration. The README's OpenSearch rebuild
+  example now uses the Koha rebuild script through `koha-shell`, matching the
+  successful G3 index-rebuild evidence.
+- The upstream Debian commands remain staged, but their presence is not a
+  blanket Alpine compatibility claim. Commands outside the entrypoint,
+  scheduled jobs, and documented supported procedures are not individually
+  certified. `koha-upgrade-schema` remains part of the uncompleted G4 migration
+  rehearsal, not a G2 pass claim.
+- Zebra is intentionally not an installed search backend: `zebraidx` and
+  `zebrasrv` are absent. `koha-rebuild-zebra` and `koha-zebra` are staged
+  upstream helpers only; OpenSearch is the validated deployment search
+  backend (G3).
+- The upstream `koha-z3950-responder` helper is staged, but inbound Koha
+  Z39.50/SRU service is excluded: this image lacks Debian's
+  `/lib/lsb/init-functions` and the recommended `Net::Z3950::SimpleServer`.
+  Entrypoint enablement treats that optional responder as non-fatal. This gate
+  validates Koha's outbound Z39.50 cataloguing search, not an inbound
+  responder. Deployments requiring inbound service must close that feature
+  gap separately.
+- The Debian `koha-sip` service, legacy `koha-upgrade-to-3.4`, and Debian
+  init/cron integration are not supported runtime paths. Alpine service and
+  scheduling behavior is supplied by the project-owned OpenRC and periodic
+  scripts.
+
+### Runtime and functional evidence
+
+A controlled `yaz-ztest` target and Koha ran in disposable project
+`koha-g2-z3950-20261030`, using newly created project-scoped MariaDB and
+RabbitMQ volumes and isolated networks. The target log records YAZ 5.34.0,
+the Bib-1 query `@attr 1=4 computer`, 23 hits, and successful record
+presentation. A client using the candidate's `ZOOM` Perl API parsed the first
+MARC record and read title “How to program a computer.”
+
+The same target was configured as a disposable row in Koha's `z3950servers`
+table. Koha's `C4::Breeding::Z3950Search`—the actual search function called by
+`cataloguing/z3950_search.pl`—connected through that configuration, parsed 20
+first-page MARC records into Koha's disposable breeding batch, and returned
+the expected title. Sanitized result:
+`KOHA_C4_BREEDING=PASS RECORDS=20 PARSED_TITLE=How to program a computer`.
+This verifies the configured outbound client and Koha result-processing path,
+not merely module loading or a standalone ZOOM connection.
+
+### Cron correction and regression
+
+The hourly job previously attempted `koha-rebuild-zebra` whenever its wrapper
+was staged, even though neither Zebra executable exists in the Alpine image;
+the failure was hidden. It now runs Zebra maintenance only when `zebraidx`,
+`zebrasrv`, and `koha-rebuild-zebra` are all available. A runtime spy check on
+the candidate confirmed that the absent backend does not invoke the wrapper.
+`tests/test_phase5_supervision.sh` asserts the binary checks. The README's
+obsolete Zebra maintenance instruction was replaced with the supported
+OpenSearch procedure and an explicit warning against using the Zebra wrapper.
+
+**Validation:** `bash tests/test_phase5_supervision.sh` passed 50 checks, 0
+failed, 1 expected opt-in skip. `bash tests/run_all_tests.sh` passed 292, 0
+failed, 29 expected skips. The isolated project and its
+`koha-db-data`/`koha-rabbitmq-data` volumes, networks, containers, and
+mode-restricted temporary environment were removed after evidence capture.
+The unrelated `koha-docker-db-1` remained running and untouched.
+
+**G2 result: PASS** for the pinned candidate's Debian-compatibility audit and
+configured outbound Z39.50 workflow, with the explicit exclusions above. The
+G3 result remains the separately recorded 16/16 run on its earlier image ID;
+this G2 candidate differs by the narrowly scoped hourly Zebra guard. A single
+frozen image identity should be used for any later release sign-off. G4–G9
+remain open, so this does not declare the Ubuntu-to-Alpine migration complete.
+
+### G3 current-candidate OpenSearch recheck — 2026-10-30
+
+The G2 candidate's production-feature recheck used a distinct image tag:
+`koha-alpine-acceptance:26.05.01-1-g3-recheck2`, image ID
+`sha256:1d7032c2aa5a3fafc5fb051be93e4a3a7f1646e126ce5a062403b6297b13b37e`.
+It contains Koha ref `v26.05.01-1`, resolved commit
+`dacce7d3fc15860d26d06444c1f5c9a2d0d6a4a9`. The isolated production-mode
+Compose project `koha-g3-recheck-20261030` started with newly created
+project-scoped MariaDB, RabbitMQ, and OpenSearch volumes; the earlier failed
+attempts were removed before this candidate was tested.
+
+The fresh Koha container was healthy. Its packaged `PERL5LIB` let
+`koha-shell -p` load both `Modern::Perl` and `Koha`. The Koha
+`Search::Elasticsearch` client successfully called `info` with authenticated
+HTTPS using the test CA and hostname verification. An unauthenticated request
+to the same endpoint returned HTTP 401. TLS options were passed as the
+client-supported nested `<ssl_options>` map (`SSL_ca_file`,
+`SSL_verify_mode`, and `verify_hostname`), rather than unsupported top-level
+Koha configuration keys.
+
+The first normal `koha-elasticsearch --rebuild` invocation exposed that
+production staging omitted `misc/search_tools`, so Koha's packaged wrapper
+could not locate `rebuild_elasticsearch.pl`. The build helper now stages that
+directory at `/usr/share/koha/bin/search_tools`; the static staging test
+asserts this packaging contract. On the candidate image, the packaged
+`koha-elasticsearch --rebuild --reset --delete --verbose kohadev` then ran.
+
+This host's filesystem was at 91% usage, above OpenSearch's 90% high disk
+watermark. OpenSearch automatically enabled its global create-index block.
+Only the disposable single-node test cluster was adjusted:
+`cluster.routing.allocation.disk.threshold_enabled=false` and
+`cluster.blocks.create_index=false`. No production configuration or repository
+default was changed. With that test-only capacity override, Koha rebuilt the
+bibliographic index with one record. A one-record MARCXML fixture was imported
+through Koha's `bulkmarcimport.pl`; the unique title
+`G3 Alpine Acceptance TLS and Indexing Test` returned one OpenSearch hit and was
+also returned by the real OPAC search page.
+
+**Candidate-specific result:** the changed Perl environment and packaged
+OpenSearch rebuild/import/search paths passed on the G2 candidate. This was a
+focused recheck, not a repeat of all 16 G3 checks. The staff, catalogue
+create/edit, patron, circulation, and background-job checks remain supported
+by the earlier 16/16 G3 run on image ID
+`sha256:9014bfdcdb4c4bc18ded228cc5345071a6ae2a8e3827ff326e2157e9275c732b`;
+they were not rerun on this exact candidate image. The full G3 gate therefore
+remains PASS across the recorded prior full run plus this candidate's targeted
+recheck, but an exact-image 16/16 rerun is still needed for frozen-image
+release sign-off. The high-disk condition must also be resolved or accepted by
+the OpenSearch operator before production use.
+
+**Validation:** `bash tests/run_all_tests.sh` passed 294 checks, 0 failed, and
+29 expected skips. The staging regression suite passed 41 checks, and
+`git diff --check` passed.

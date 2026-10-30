@@ -133,6 +133,12 @@ echo "# --- Static: Cron scripts ---"
 check "files-alpine/cron/koha-hourly exists"  test -f files-alpine/cron/koha-hourly
 check "files-alpine/cron/koha-daily exists"   test -f files-alpine/cron/koha-daily
 check "files-alpine/cron/koha-monthly exists" test -f files-alpine/cron/koha-monthly
+check "hourly Zebra rebuild checks for zebraidx" \
+    grep -q 'command -v zebraidx' files-alpine/cron/koha-hourly
+check "hourly Zebra rebuild checks for zebrasrv" \
+    grep -q 'command -v zebrasrv' files-alpine/cron/koha-hourly
+check "hourly Zebra rebuild checks for koha-rebuild-zebra" \
+    grep -q 'command -v koha-rebuild-zebra' files-alpine/cron/koha-hourly
 
 check "koha-hourly has KOHA_CONF guard" \
     grep -q 'KOHA_CONF' files-alpine/cron/koha-hourly
@@ -246,10 +252,16 @@ else
 
     koha_instance="$(docker exec "${KOHA_CONTAINER}" sh -lc 'printf "%s" "${KOHA_INSTANCE:-kohadev}"' 2>/dev/null)"
     if docker exec "${KOHA_CONTAINER}" sh -lc 'test -d /usr/share/koha/lib' >/dev/null 2>&1 \
-        && docker exec "${KOHA_CONTAINER}" koha-shell -c 'printf "%s\n" "$PERL5LIB"' "${koha_instance}" 2>/dev/null | grep -Fxq '/usr/share/koha/lib'; then
-        ok "koha-shell loads the packaged PERL5LIB for this non-git instance"
+        && docker exec "${KOHA_CONTAINER}" koha-shell -c 'printf "%s\n" "$PERL5LIB"' "${koha_instance}" 2>/dev/null | grep -Fxq '/opt/koha-perl/lib/perl5:/kohadevbox/koha/lib:/kohadevbox/koha:/usr/share/koha/lib'; then
+        ok "koha-shell loads Alpine and packaged PERL5LIB for this non-git instance"
     else
-        not_ok "koha-shell loads the packaged PERL5LIB for this non-git instance"
+        not_ok "koha-shell loads Alpine and packaged PERL5LIB for this non-git instance"
+    fi
+
+    if docker exec "${KOHA_CONTAINER}" koha-shell -c 'perl -MModern::Perl -MKoha -e 1' "${koha_instance}" >/dev/null 2>&1; then
+        ok "koha-shell can load Koha and its local Perl dependencies"
+    else
+        not_ok "koha-shell can load Koha and its local Perl dependencies"
     fi
 
     if docker exec "${KOHA_CONTAINER}" sh -lc 'grep -a -q "/usr/local/bin/run.sh" /proc/1/cmdline' >/dev/null 2>&1; then

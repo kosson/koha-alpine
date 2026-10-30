@@ -291,11 +291,11 @@ docker compose up -d --force-recreate os01
 If Koha shows `Records are not indexed in Elasticsearch` in the staff interface, run the rebuild from inside the Koha application container, not from the OpenSearch container:
 
 ```bash
-docker exec -it <koha-container-name> bash
-koha-elasticsearch --rebuild -d -b -a <instance-name>
+docker compose -f docker-compose-alpinekoha.yml -f docker-compose.prod.yml exec -T koha \
+  koha-elasticsearch --rebuild --reset --delete --verbose <instance-name>
 ```
 
-Use your actual Koha container name and instance name. For this repository the instance is commonly `kohadev` for example `docker exec -it koha-alpine-koha-1 bash` followed by `koha-elasticsearch --rebuild -d -b -a kohadev`.
+Use the production Compose configuration and actual instance name. For this repository the instance is commonly `kohadev`. This is the OpenSearch/Elasticsearch index rebuild path; the Debian Zebra command is not supported by the Alpine runtime.
 
 Keep these values aligned every time you rotate credentials:
 
@@ -1071,13 +1071,16 @@ docker compose -f docker-compose-alpinekoha.yml logs koha | grep -i "can't locat
 #### Rebuild Search Indexes
 
 ```bash
-# Inside container (if Elasticsearch enabled)
-docker compose -f docker-compose-alpinekoha.yml exec koha \
-  koha-rebuild-zebra -f kohadev
-
-# Note: Currently returns warnings due to disabled Elasticsearch
-# This is non-critical and does not affect HTTP operation
+# Inside the Koha container, when OpenSearch/Elasticsearch is configured
+docker compose -f docker-compose-alpinekoha.yml -f docker-compose.prod.yml exec -T koha \
+  koha-shell kohadev -p -c \
+  'perl /kohadevbox/koha/misc/search_tools/rebuild_elasticsearch.pl -r -v -d'
 ```
+
+`koha-rebuild-zebra` is staged from Koha's Debian manifest, but Zebra binaries
+are not installed in the Alpine image. The hourly task skips Zebra unless both
+`zebraidx` and `zebrasrv` are present. Do not use the Zebra wrapper as an
+OpenSearch index-rebuild command.
 
 #### OpenSearch Maintenance Tasks
 

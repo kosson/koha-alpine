@@ -1,6 +1,6 @@
 # Alpine Migration: State Assessment and Forward Roadmap
 
-**Review date:** 2026-10-29
+**Review date:** 2026-10-30
 
 **Branch:** `phase`
 **Scope:** Alpine container adaptation, its Koha Debian compatibility layer, migration records, tracker, and architecture references.
@@ -18,7 +18,7 @@ That status needs qualification:
 5. An earlier review reported merge-conflict markers in configuration, but the current inspection found no conflict markers or duplicate keys in `env/.env`. The tracked environment and OpenSearch auth templates previously contained credential-capable values; those values were scrubbed from the current worktree, and the owner reports potentially active credentials have been rotated. Historical Git/remotes still need an owner-approved disposition before G0 can pass. `OpenSearch-3.6/.env` remains ignored and local.
 6. Re-running Phase 4 guardrails exposed drift in `Dockerfile-Alpine` and `koha-worker`: the development image did not install its Alpine command overlays or `busybox-extras`, and the worker wrapper missed Koha's current `misc/workers` path and queue options. Those gaps were restored and exercised in the Phase D image.
 
-The Alpine implementation has substantial evidence for the recorded pinned release: production and development images started in separate isolated projects, a fresh development database bootstrapped and passed Plack/API and browser checks, lifecycle checks passed, runtime reduction/least-privilege gates passed, and G3 production feature acceptance passed on 2026-10-30. **End-to-end migration from an existing Ubuntu installation is not complete or accepted.** G2's pinned-release compatibility/Z39.50 audit, G4's Ubuntu-data rehearsal, G5's backup/restore/rollback rehearsal, G6's volume-identity/cutover proof, G7's operations readiness, G8's independent operator walkthrough, and G9's owner sign-off remain open. See the [end-to-end acceptance gates](./End-to-end-migration-acceptance.md).
+The Alpine implementation has substantial evidence for the recorded pinned release: production and development images started in separate isolated projects, a fresh development database bootstrapped and passed Plack/API and browser checks, lifecycle checks passed, runtime reduction/least-privilege gates passed, and G2 and G3 production-image acceptance passed on 2026-10-30. **End-to-end migration from an existing Ubuntu installation is not complete or accepted.** G4's Ubuntu-data rehearsal, G5's backup/restore/rollback rehearsal, G6's volume-identity/cutover proof, G7's operations readiness, G8's independent operator walkthrough, and G9's owner sign-off remain open. See the [end-to-end acceptance gates](./End-to-end-migration-acceptance.md).
 
 ## Evidence-based implementation map
 
@@ -31,19 +31,19 @@ The Alpine implementation has substantial evidence for the recorded pinned relea
 | Admin commands | `files-alpine/scripts/` contains Alpine replacements for selected Debian `koha-*` tools; remaining upstream scripts and templates are sourced from `koha/debian`. | Build-time override installation, `busybox-extras`, and the worker's queue/path compatibility are restored. Phase E also ensures production `PATH` exposes the staged `/usr/sbin` commands; `koha-shell` and its packaged `PERL5LIB` were verified in both targets. |
 | Build staging | `scripts/build-alpine-package.sh` reads `koha/debian/koha-common.install` and stages runtime resources. | Production build wiring was added in Phase B; the pinned production image contains the staged runtime assets and Alpine command overrides. |
 | Production path | `docker-compose.prod.yml` requests `prod-runtime`, requires a release version/ref, and replaces the dev source-volume list. | The pinned `v26.05.01-1` image built successfully; provenance, baked assets, no source mount, pruned packages, production defaults, and a fresh isolated production startup were verified. |
-| Tests | `tests/run_all_tests.sh` combines static, unit, image-backed, and integration checks. | The recorded Phase E selected-project run passed 296 checks with 0 failures and 19 expected skips; dev/production smoke tests each passed 10/10 and Phase 5 supervision passed 64/64 in both targets. The later Phase F non-integration run passed 268 checks, 0 failures, and 29 expected opt-in skips. These are separate runs and not a single combined acceptance result. |
+| Tests | `tests/run_all_tests.sh` combines static, unit, image-backed, and integration checks. | The G2 closeout run passed 292 checks with 0 failures and 29 expected opt-in skips; Phase 5 supervision passed 50 checks with 0 failures and 1 expected runtime skip. Earlier Phase E/F results remain historical, separate runs rather than one combined acceptance result. |
 | Upstream baseline | `koha/debian/scripts`, `koha/debian/templates`, and the Debian install manifest define the compatibility source of truth. | Keep Debian-specific packaging details at the boundary; avoid carrying a full Debian runtime/package manager into Alpine. |
 
 ### Phase completion, with remaining gates
 
 | Phase | Recorded outcome | Remaining evidence or work |
 |---|---|---|
-| 1 — Native C libraries and Perl | YAZ/ZOOM work is recorded as complete. | Reconfirm through the production image build and targeted Z39.50 checks. |
-| 2 — Build-time asset staging | Dev/prod image stages stage the Debian manifest at build time and install Alpine overrides afterward. | Reconfirm native-library/Z39.50 behavior against the pinned production image. |
+| 1 — Native C libraries and Perl | YAZ 5.34.0 and Perl ZOOM modules are present in the pinned production image. | G2 passed a controlled outbound Z39.50 query and MARC result parse through Koha's configured search path. Inbound responder support remains explicitly excluded. |
+| 2 — Build-time asset staging | Dev/prod image stages runtime assets from the Debian manifest at build time and installs Alpine overrides afterward. | G2 reconciled manifest payload staging, override precedence, PATH, and Alpine-specific exclusions against the rebuilt production candidate. |
 | 3 — Dual-mode templating / Gitify removal | Project-owned templates and vhost rendering replace runtime Gitify behavior. | Keep the test assertions aligned to the actual no-Gitify contract. |
 | 4 — POSIX admin tools / shim removal | Alpine rewrites exist for selected lifecycle commands; image overlay wiring and worker queue/path compatibility are restored. | The `koha-shell` config/`PERL5LIB` check passed in Phase D; broader compatibility coverage remains part of subsequent hardening. |
 | 5 — OpenRC, watchdog, cron | OpenRC wrappers, periodic tasks, and a SIGTERM-aware watchdog are installed in the image. | Phase D runtime gates passed: Plack and worker recovery, controlled periodic work, and graceful shutdown with no orphaned container processes. |
-| Dev/production split | Compose overlay and `stack-alpine.sh` mode selection exist. | Pinned-image and fresh-start behavior passed for the recorded release; G3 production feature acceptance passed on 2026-10-30. G2 compatibility/Z39.50, same-version upgrade rehearsal, Ubuntu-data migration, backup/restore, and owner sign-off remain open. |
+| Dev/production split | Compose overlay and `stack-alpine.sh` mode selection exist. | G2 compatibility/Z39.50 and G3 production-feature acceptance passed on 2026-10-30 for Koha `v26.05.01-1`; G4–G9 remain open. The G2 candidate includes the hourly Zebra guard and has a distinct image ID from the earlier G3 run. |
 
 ## Decisions and safety rules
 
@@ -130,17 +130,21 @@ The phase deliverables track implementation of the Alpine runtime. They do not,
 by themselves, prove migration of an existing Ubuntu service. The separate
 end-to-end acceptance gates remain open until their evidence is recorded:
 
-- [ ] G0: Record the owner-approved Git-history/remotes disposition, verify
+- [x] G0: Record the owner-approved Git-history/remotes disposition, verify
   rotated credentials, and close out the sanitized tracked-config and
   external-injection review.
-- [ ] G1: Run the local CI-independent validation script and record both full
+- [x] G1: Run the local CI-independent validation script and record both full
   builds, test results, Koha commit, image IDs/digests, and tool versions.
-- [ ] G2: Rebuild/run the candidate production image and execute a successful
-  end-to-end Z39.50 query/result parse.
+- [x] G2: Rebuild/run the candidate production image, reconcile Debian
+  manifest/runtime commands, and execute a configured Koha Z39.50
+  query/result parse. Evidence: candidate image
+  `koha-alpine-acceptance:26.05.01-1-g2`; see the dated G2 tracker addendum.
 - [x] G3: Pass production-mode login, catalogue create/edit, patron, circulation,
   background-job, OpenSearch TLS/auth/search, and MARCXML import checks. Evidence:
-  isolated project `koha-alpine-test-g3tls`, 16/16 checks, 2026-10-30; see the
-  acceptance matrix and dated tracker addendum.
+  isolated project `koha-alpine-test-g3tls`, 16/16 checks, 2026-10-30; the current
+  G2 candidate additionally passed a fresh OpenSearch rebuild/import/search recheck.
+  See the acceptance matrix and dated tracker addenda. The full 16-check workflow
+  was not repeated on the current candidate.
 - [ ] G4: Rehearse migration of a protected representative Ubuntu data copy in
   an isolated project and reconcile schema/data/operations.
 - [ ] G5: Rehearse backup, restore, rollback, and recovery of assets excluded

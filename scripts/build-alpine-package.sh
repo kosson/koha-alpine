@@ -76,6 +76,14 @@ if ( -d "$koha_dir/C4" && -d "$koha_dir/Koha" ) {
     system("cp -a $koha_dir/Koha /usr/share/koha/lib/");
 }
 
+if ( -d "$koha_dir/misc/search_tools" ) {
+    make_path('/usr/share/koha/bin/search_tools');
+    my $copy_status = system(
+        'cp', '-a', "$koha_dir/misc/search_tools/.", '/usr/share/koha/bin/search_tools/'
+    );
+    die "Cannot stage Koha search tools (cp status $copy_status)\n" if $copy_status != 0;
+}
+
 if ( -d "$koha_dir/etc/zebradb" ) {
     make_path('/etc/koha/zebradb');
     system("cp -a $koha_dir/etc/zebradb/* /etc/koha/zebradb/ 2>/dev/null");
@@ -115,6 +123,38 @@ while ( my ( $deb_file, $target ) = each %system_files ) {
     if ( -f $src ) {
         system("cp -a '$src' '$target'");
     }
+}
+
+# koha-shell starts commands with PERL5LIB from koha-common.default. Alpine
+# installs Koha's dependencies in a local::lib and keeps its source in /kohadevbox.
+my $koha_defaults = '/etc/default/koha-common';
+if ( -f $koha_defaults ) {
+    open my $defaults_in, '<', $koha_defaults
+        or die "Cannot open $koha_defaults: $!\n";
+    local $/;
+    my $defaults_content = <$defaults_in>;
+    close $defaults_in or die "Cannot close $koha_defaults: $!\n";
+
+    my ($perl5lib) = $defaults_content =~ /^PERL5LIB=(.*)$/m;
+    die "PERL5LIB is missing from $koha_defaults\n" unless defined $perl5lib;
+    $perl5lib =~ s/^\s*["']//;
+    $perl5lib =~ s/["']\s*$//;
+    my @alpine_perl5lib = (
+        '/opt/koha-perl/lib/perl5',
+        '/kohadevbox/koha/lib',
+        '/kohadevbox/koha',
+    );
+    my %seen = map { $_ => 1 } @alpine_perl5lib;
+    my @remaining_perl5lib = grep { length && !$seen{$_}++ } split /:/, $perl5lib;
+    my @perl5lib = ( @alpine_perl5lib, @remaining_perl5lib );
+    my $perl5lib_joined = join ':', @perl5lib;
+    $defaults_content =~ s/^PERL5LIB=.*$/PERL5LIB="$perl5lib_joined"/m;
+
+    open my $defaults_out, '>', $koha_defaults
+        or die "Cannot write $koha_defaults: $!\n";
+    print {$defaults_out} $defaults_content
+        or die "Cannot write $koha_defaults: $!\n";
+    close $defaults_out or die "Cannot close $koha_defaults: $!\n";
 }
 
 # Copy Apache templates

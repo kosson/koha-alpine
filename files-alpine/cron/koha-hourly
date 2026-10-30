@@ -13,8 +13,10 @@ export KOHA_CONF="/etc/koha/sites/${KOHA_INSTANCE}/koha-conf.xml"
 # Guard: skip silently if instance is not bootstrapped yet.
 [ -f "${KOHA_CONF}" ] || exit 0
 
-# Rebuild Zebra bibliographic and authority indexes (delta mode: changes only).
-if command -v koha-rebuild-zebra >/dev/null 2>&1; then
+# Rebuild Zebra indexes only when the optional Zebra backend is installed.
+if command -v zebraidx >/dev/null 2>&1 \
+    && command -v zebrasrv >/dev/null 2>&1 \
+    && command -v koha-rebuild-zebra >/dev/null 2>&1; then
     koha-rebuild-zebra -b -a -z "${KOHA_INSTANCE}" >/dev/null 2>&1 || true
 fi
 
