@@ -3,9 +3,12 @@
 **Assessment date:** 2026-10-29
 
 **Status updated:** 2026-10-30
-**Current conclusion:** The Alpine implementation has passed substantial fresh-install
-and runtime validation for Koha `v26.05.01-1`. The end-to-end migration from an
-existing Ubuntu deployment is **not yet accepted**.
+**Current conclusion:** The Alpine implementation has passed substantial
+fresh-install and runtime validation for Koha `v26.05.01-1`. The isolated G4
+Ubuntu-data rehearsal passed on Koha `26.06.00.003` at the source commit, with
+one pre-existing malformed MARCXML record documented. The overall
+Ubuntu-to-Alpine migration and production recovery are **not yet accepted**;
+G5–G9 remain open.
 
 This document defines the evidence required before declaring the migration
 complete. It distinguishes a working Alpine image from a proven migration and
@@ -32,7 +35,7 @@ production volumes.
 | G1 | **Required / PASS (2026-10-29)** | CI-independent local release validation | Run `bash scripts/validate-release-local.sh` with the intended Koha version/ref. The local suite, both Compose configs, and full uncached dev/prod image builds must pass. Record repository revision, requested Koha ref and resolved commit, image IDs/digests, tool versions, and any mutable-base-image exception/refresh policy. This repository intentionally does not require hosted CI. |
 | G2 | **Required / PASS (2026-10-30)** | Pinned release and Debian-compatibility audit | The rebuilt candidate passed a manifest/command disposition audit and Koha's configured outbound Z39.50 search path against an isolated target; YAZ/ZOOM and MARC parsing succeeded. See the dated G2 tracker addendum for image identity, exact results, overlays, cron regression, and explicit exclusions. |
 | G3 | **Required / PASS (2026-10-30)** (16/16 full workflow on the earlier candidate; current G2 candidate also passed a fresh OpenSearch TLS, rebuild, MARCXML import, and OPAC-search recheck; see tracker G3 addenda 3–4) | Koha operational feature acceptance | On a fresh isolated production-mode stack, verify authenticated staff login, OPAC, catalogue search, one representative catalogue create/edit, patron lookup, a controlled checkout/checkin, and a background job. If OpenSearch is enabled, verify cluster/auth health, index build or rebuild, and a Koha search returning expected records. Include MARC import if it is part of the deployment's required operations. Record screenshots/log identifiers and test data cleanup. |
-| G4 | **Required / NOT RUN** | Existing Ubuntu-data migration rehearsal | Create a protected, recoverable copy of a representative source installation. In a separate disposable host or isolated project, migrate its logical Koha database and required configuration/assets using the approved procedure. Run Alpine startup with explicit existing-database behavior; verify schema upgrade, record/patron counts or agreed integrity queries, staff authentication, G3 workflows, background jobs, TLS, and enabled search. Record source/target Koha versions, database versions, duration, deviations, and before/after reconciliation. |
+| G4 | **Required / PASS (2026-10-30; source-data caveat recorded)** | Existing Ubuntu-data migration rehearsal | A protected, transaction-consistent source copy was imported into a verified-isolated project and started with explicit existing-data settings on an Alpine image built from the exact source Koha commit. Schema and baseline counts reconciled; staff/API authentication, patron lookup, MARC import/edit, checkout/checkin, background indexing, TLS, and migrated-record search passed. One malformed MARCXML row was present in both source and target and is documented as a pre-existing data-quality limitation. See the [G4 tracker record](../TRACKER/2026-10-30%20%E2%80%94%20G4%20Ubuntu-data%20migration%20rehearsal.md). |
 | G5 | **Required / NOT RUN** | Backup consistency, restore, and rollback rehearsal | Establish an application write-quiescence/maintenance procedure and test a backup while respecting the actual helper behavior. Restore into separate empty test volumes, not production. Verify database integrity, expected application state, the previous image, and all required external assets. Simulate a failed upgrade and demonstrate restoration of the pre-upgrade DB/config plus recovery of excluded RabbitMQ, OpenSearch, certificates, and host files. Record recovery time and data-loss point. |
 | G6 | **Required / PARTIAL** | Volume identity and cutover safety | For an existing deployment, identify the exact current Compose project name and its database/RabbitMQ volumes. Configure `KOHA_PROD_PROJECT` to that exact project before an in-place upgrade, or document and rehearse a separate copy/restore migration. Verify the selected volume names before start and after start. Demonstrate that the fresh-start path cannot accidentally reset the migrated database. |
 | G7 | **Required / PARTIAL** | Security and operations readiness | Confirm production secrets are outside Git and not present in build args, labels, or logs; validate TLS trust and client authentication on actual endpoints; check file permissions/capabilities and container health; verify monitoring, log retention, alert ownership, capacity, and restore access. Review base/service image update ownership and pinning policy. Record which host assets and external services are independently protected. |
@@ -135,16 +138,17 @@ protected. The source remains untouched. Prepare a dedicated project name,
 distinct ports, isolated network, and verified-absent target volumes. Record
 the exact volume names before starting.
 
-Document how the source DB is exported, how Koha configuration and any required
-attachments/assets are carried over, how DB users/privileges/TLS are recreated,
-and how target Koha performs its schema upgrade. Do not assume that the Alpine
-`stack-alpine.sh restore` command is a general Ubuntu migration tool: it restores
-this repository's three env files and a MariaDB dump, then starts this stack.
+The [migration and upgrade runbook](./koha-version-migration-runbook.md) records
+the rehearsed export/import and configuration-reconciliation approach. Do not
+assume that the Alpine `stack-alpine.sh restore` command is a general Ubuntu
+migration tool: it restores this repository's three env files and a MariaDB
+dump, then starts this stack.
 
 Compare source and destination using agreed integrity checks, including Koha
-schema version, key row counts, sample record/patron IDs, permissions, and
-critical workflow outcomes. Test the actual production image with its source
-mount absent. Capture deviations and repeat the rehearsal after fixing them.
+schema version, key row counts, permissions, and critical workflow outcomes.
+Test the actual production image with its source mount absent. Avoid recording
+patron identifiers or credentials in the tracker. Capture deviations and
+repeat the rehearsal after fixing them.
 
 ### 5. Prove backup and recovery (G5–G6)
 
@@ -190,8 +194,9 @@ As of 2026-10-30:
   selected Plack/API/browser checks; lifecycle, worker, cron, broker,
   capability, permission, and health checks; latest local tests (292 passed,
   0 failed, 29 expected opt-in skips); current dev/prod Compose config checks;
-  Dockerfile `buildx --check`. The local release procedure repeated the tests
-  and both Compose checks successfully.
+  Dockerfile `buildx --check`; and the isolated G4 Ubuntu-data rehearsal. The
+  local release procedure repeated the tests and both Compose checks
+  successfully.
 - **G1 evidence (2026-10-29):** `scripts/validate-release-local.sh` passed end to
   end after storage was freed: 279 tests passed/0 failed/29 expected skips, both
   Compose configs, and uncached `--pull` builds of both images. Koha
@@ -205,9 +210,16 @@ As of 2026-10-30:
 - **G2 evidence (2026-10-30):** configured Koha Z39.50 query/result parsing and
   Debian compatibility audit passed on a fresh isolated production candidate;
   see the G2 tracker addendum.
-- **Not yet demonstrated:** migration from an Ubuntu data copy; consistent
-  backup and restore; full recovery including excluded assets; final
-  service-owner sign-off. G2 and G3 have separate dated PASS evidence.
+- **G4 evidence (2026-10-30):** the imported Ubuntu database started on the
+  production image built from source commit
+  `c355bb8574f62e4a04e774a65a6385feb9b858b0`. Baseline schema and row counts
+  matched. Staff authentication, patron lookup, MARC import/edit,
+  checkout/checkin, broker-backed indexing, MariaDB/OpenSearch TLS, and OPAC
+  search passed. One malformed MARCXML row and associated indexer diagnostics
+  were already present in the source data; see the dated G4 tracker record.
+- **Not yet demonstrated:** consistent backup and restore; full recovery
+  including excluded assets; production cutover; final service-owner sign-off.
+  G2, G3, and G4 have separate dated PASS evidence.
 - **G0 decision (2026-10-29):** the owner chose to leave Git history and
   remotes unchanged (no rewrite) and to document the residual risk: former
   credential-capable values remain retrievable from old commits, clones, forks,

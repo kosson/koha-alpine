@@ -69,27 +69,38 @@ Before any rehearsal:
 
 ## Phase C — Import and start the Alpine target
 
-The Ubuntu-to-Alpine method must be written and reviewed based on the rehearsal.
+The [2026-10-30 G4 tracker record](../TRACKER/2026-10-30%20%E2%80%94%20G4%20Ubuntu-data%20migration%20rehearsal.md)
+records a successful, version-matched Ubuntu-data rehearsal and its caveats.
 Do not assume `stack-alpine.sh restore` can migrate an Ubuntu environment:
 that command restores this repository's env files and a MariaDB dump, resets
 the configured database, and starts the Alpine stack.
 
 For an existing Alpine database during a planned version upgrade, use the
 supported production procedure in the Phase F guide. For the one-time Ubuntu
-migration rehearsal, the operator procedure must explicitly specify:
+migration procedure, use the following rehearsed sequence and record the
+deployment-specific values without placing secrets in logs or source control:
 
 - how the copied database is created/imported into the isolated Alpine
-  MariaDB service;
-- how DB credentials, privileges, TLS certificates, and Koha config are
-  reconciled;
+  MariaDB service (the G4 rehearsal used a transaction-consistent logical dump
+  after confirming all source tables were InnoDB);
+- how DB credentials, privileges, and TLS certificates are recreated for the
+  target instead of reusing source credentials;
+- how the source Koha configuration is mapped to a regenerated Alpine
+  `koha-conf.xml`, including hostnames, filesystem paths, search endpoint, and
+  message-broker settings;
 - how required host files and external-service state are restored;
 - how the exact target project and volumes are selected; and
 - how Koha schema upgrade is triggered and monitored.
 
 Start the target only after confirming the isolated project, target image
 digest, environment, and volumes. For a populated DB, use the existing-data
-startup behavior; do not run a fresh bootstrap or reset. Record logs and stop
-the test if the schema-upgrade path is ambiguous or destructive.
+startup behavior; do not run a fresh bootstrap or reset. The G4 rehearsal
+started the production image with `USE_EXISTING_DB=yes`,
+`ALPINE_BOOTSTRAP_PROFILE=resume`, and
+`RUN_DB_POPULATION_ON_EXISTING_DB=no`; it confirmed that startup invoked
+`updatedatabase.pl` without resetting the imported database. Record logs and
+stop the test if the schema-upgrade path is ambiguous or destructive. A
+version-matched rehearsal does not prove a cross-version schema upgrade.
 
 ## Phase D — Acceptance checks
 
@@ -136,10 +147,10 @@ Attach to the dated tracker record:
 - restore/rollback results, recovery duration, and unresolved limitations;
 - service owner decision and explicit scope exclusions.
 
-End-to-end migration is complete only when all required gates pass. Until then,
-the accepted statement is: **Alpine image implementation is validated for the
-recorded release; migration of an existing Ubuntu installation and production
-recovery are pending rehearsal and owner approval.**
+End-to-end migration is complete only when all required gates pass. The G4
+Ubuntu-data rehearsal has passed for its recorded, version-matched source and
+target, but production migration, backup/restore, rollback, and owner approval
+remain pending.
 
 ## Operator execution record
 

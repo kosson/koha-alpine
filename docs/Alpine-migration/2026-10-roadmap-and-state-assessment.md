@@ -18,7 +18,7 @@ That status needs qualification:
 5. An earlier review reported merge-conflict markers in configuration, but the current inspection found no conflict markers or duplicate keys in `env/.env`. The tracked environment and OpenSearch auth templates previously contained credential-capable values; those values were scrubbed from the current worktree, and the owner reports potentially active credentials have been rotated. Historical Git/remotes still need an owner-approved disposition before G0 can pass. `OpenSearch-3.6/.env` remains ignored and local.
 6. Re-running Phase 4 guardrails exposed drift in `Dockerfile-Alpine` and `koha-worker`: the development image did not install its Alpine command overlays or `busybox-extras`, and the worker wrapper missed Koha's current `misc/workers` path and queue options. Those gaps were restored and exercised in the Phase D image.
 
-The Alpine implementation has substantial evidence for the recorded pinned release: production and development images started in separate isolated projects, a fresh development database bootstrapped and passed Plack/API and browser checks, lifecycle checks passed, runtime reduction/least-privilege gates passed, and G2 and G3 production-image acceptance passed on 2026-10-30. **End-to-end migration from an existing Ubuntu installation is not complete or accepted.** G4's Ubuntu-data rehearsal, G5's backup/restore/rollback rehearsal, G6's volume-identity/cutover proof, G7's operations readiness, G8's independent operator walkthrough, and G9's owner sign-off remain open. See the [end-to-end acceptance gates](./End-to-end-migration-acceptance.md).
+The Alpine implementation has substantial evidence for the recorded pinned release: production and development images started in separate isolated projects, a fresh development database bootstrapped and passed Plack/API and browser checks, lifecycle checks passed, runtime reduction/least-privilege gates passed, and G2–G4 passed on 2026-10-30. G4 rehearsed an Ubuntu database copy using a production image built from the source's exact Koha commit; one malformed MARCXML record already present in the source is documented as a data-quality caveat. **The overall end-to-end migration is not complete or accepted.** G5's backup/restore/rollback rehearsal, G6's volume-identity/cutover proof, G7's operations readiness, G8's independent operator walkthrough, and G9's owner sign-off remain open. See the [end-to-end acceptance gates](./End-to-end-migration-acceptance.md).
 
 ## Evidence-based implementation map
 
@@ -43,7 +43,7 @@ The Alpine implementation has substantial evidence for the recorded pinned relea
 | 3 — Dual-mode templating / Gitify removal | Project-owned templates and vhost rendering replace runtime Gitify behavior. | Keep the test assertions aligned to the actual no-Gitify contract. |
 | 4 — POSIX admin tools / shim removal | Alpine rewrites exist for selected lifecycle commands; image overlay wiring and worker queue/path compatibility are restored. | The `koha-shell` config/`PERL5LIB` check passed in Phase D; broader compatibility coverage remains part of subsequent hardening. |
 | 5 — OpenRC, watchdog, cron | OpenRC wrappers, periodic tasks, and a SIGTERM-aware watchdog are installed in the image. | Phase D runtime gates passed: Plack and worker recovery, controlled periodic work, and graceful shutdown with no orphaned container processes. |
-| Dev/production split | Compose overlay and `stack-alpine.sh` mode selection exist. | G2 compatibility/Z39.50 and G3 production-feature acceptance passed on 2026-10-30 for Koha `v26.05.01-1`; G4–G9 remain open. The G2 candidate includes the hourly Zebra guard and has a distinct image ID from the earlier G3 run. |
+| Dev/production split | Compose overlay and `stack-alpine.sh` mode selection exist. | G2 compatibility/Z39.50 and G3 production-feature acceptance passed on 2026-10-30 for Koha `v26.05.01-1`; the G4 imported-data rehearsal passed on Koha `26.06.00.003` from the exact source commit. G5–G9 remain open. The G2 candidate includes the hourly Zebra guard and has a distinct image ID from the earlier G3 run. |
 
 ## Decisions and safety rules
 
@@ -145,8 +145,12 @@ end-to-end acceptance gates remain open until their evidence is recorded:
   G2 candidate additionally passed a fresh OpenSearch rebuild/import/search recheck.
   See the acceptance matrix and dated tracker addenda. The full 16-check workflow
   was not repeated on the current candidate.
-- [ ] G4: Rehearse migration of a protected representative Ubuntu data copy in
-  an isolated project and reconcile schema/data/operations.
+- [x] G4: Rehearse migration of a protected representative Ubuntu data copy in
+  an isolated project and reconcile schema/data/operations. Evidence:
+  project `koha-g4-20261030`, exact Koha source commit, baseline record/patron/
+  item/branch counts, authenticated workflows, TLS, and OpenSearch search passed.
+  One pre-existing malformed MARCXML record is recorded as a source-data caveat;
+  see the G4 tracker record and acceptance matrix.
 - [ ] G5: Rehearse backup, restore, rollback, and recovery of assets excluded
   from the built-in MariaDB/config archive.
 - [ ] G6: Verify the exact production Compose project and DB/RabbitMQ volumes;
@@ -158,8 +162,8 @@ end-to-end acceptance gates remain open until their evidence is recorded:
 
 See the [acceptance matrix and evidence requirements](./End-to-end-migration-acceptance.md).
 Until all required gates pass, use the status: **Alpine image implementation
-validated for the recorded release; Ubuntu-to-Alpine migration and production
-recovery pending rehearsal and owner approval.**
+validated for the recorded releases; the G4 Ubuntu-data rehearsal passed, but
+production migration, recovery, and owner approval remain pending.**
 
 ## Current review changes
 
