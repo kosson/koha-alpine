@@ -162,6 +162,9 @@ end-to-end acceptance gates remain open until their evidence is recorded:
   for `start`/`restart`/`reset` on a populated production DB.
 - [ ] G7: Verify production secret/TLS controls, health/monitoring, retention,
   capacity, and operational ownership.
+  Audit started 2026-10-31 (PARTIAL): demo-credential guard and banner masking
+  done; Koha-to-DB TLS blocked by `DBD::mysql`/Connector-C; CA key exposure, log
+  rotation and owner items open (see the G7 tracker record).
 - [ ] G8: Complete an independent operator walkthrough of the updated runbook.
 - [ ] G9: Record service-owner sign-off and approved scope/exclusions.
 

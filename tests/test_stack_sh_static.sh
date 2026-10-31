@@ -90,6 +90,10 @@ assert_contains "new production volumes need explicit acceptance" 'KOHA_ACCEPT_N
 assert_contains "running mounts are verified against expected volumes" 'verify_running_volume_identity()'
 assert_contains "destructive prod actions need the typed project name" 'confirm_prod_destructive()'
 assert_contains "volume identity command exists" 'volumes)'
+assert_contains "production refuses demo or placeholder credentials" 'reject_demo_credentials()'
+assert_contains "demo credential override is explicit" 'KOHA_ALLOW_DEMO_CREDENTIALS'
+assert_contains "production banner does not print the staff password" 'password from ${KOHA_ENV_FILE##*/}'
+assert_contains "production warns about the tracked demo CA key" 'ca-key.pem is tracked in Git'
 
 echo ""
 echo "1..${_N}"

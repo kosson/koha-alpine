@@ -130,6 +130,10 @@ sed -i \
     -e "s|__MESSAGE_BROKER_USER__|$MESSAGE_BROKER_USER_ESC|g" \
     -e "s|__MESSAGE_BROKER_PASS__|$MESSAGE_BROKER_PASS_ESC|g" \
     -e "s|__MESSAGE_BROKER_VHOST__|$MESSAGE_BROKER_VHOST_ESC|g" \
+    -e "s|__DB_USE_TLS__|${KOHA_DB_USE_TLS:-no}|g" \
+    -e "s|__DB_TLS_CA_CERTIFICATE__|${KOHA_DB_TLS_CA_CERTIFICATE:-}|g" \
+    -e "s|__DB_TLS_CLIENT_CERTIFICATE__|${KOHA_DB_TLS_CLIENT_CERTIFICATE:-}|g" \
+    -e "s|__DB_TLS_CLIENT_KEY__|${KOHA_DB_TLS_CLIENT_KEY:-}|g" \
     "${KOHACONF}.tmp"
 ZEBRA_PWD=$(head -c 16 /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c16); API_SECRET=$(head -c 32 /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c32)
 sed -i \

@@ -407,6 +407,28 @@ traefik_compose() {
     "$@"
 }
 
+# Public demo values (env/demo-credentials.env) and placeholders must never
+# run a production deployment.
+reject_demo_credentials() {
+  [[ "${KOHA_ALLOW_DEMO_CREDENTIALS:-no}" == "yes" ]] && return 0
+  local key val bad=()
+  for key in KOHA_DB_ROOT_PASSWORD KOHA_DB_PASSWORD KOHA_RABBITMQ_PASS KOHA_PASS KOHA_ADMIN_PASS OPENSEARCH_INITIAL_ADMIN_PASSWORD; do
+    val="$(_env_val "${KOHA_ENV_FILE}" "${key}" "")"
+    [[ -z "${val}" ]] && continue
+    shopt -s nocasematch
+    if [[ "${val}" == demo-* || "${val}" == change_me* || "${val}" == "password" || "${val}" == "koha" ]]; then
+      bad+=("${key}")
+    fi
+    shopt -u nocasematch
+  done
+  if ((${#bad[@]})); then
+    die "Production mode refuses demo/placeholder credentials (${bad[*]}) in ${KOHA_ENV_FILE}. Set unique values in an untracked env file, or KOHA_ALLOW_DEMO_CREDENTIALS=yes for a throwaway test."
+  fi
+  if git -C "${SCRIPT_DIR}" ls-files --error-unmatch files-alpine/mariadb-ssl/ca-key.pem >/dev/null 2>&1; then
+    warn "files-alpine/mariadb-ssl/ca-key.pem is tracked in Git (public demo CA) and is mounted into the Koha container. Regenerate private TLS material (and keep the CA key out of the mounted directory) for production."
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # Prerequisite checks
 # ---------------------------------------------------------------------------
@@ -425,6 +447,7 @@ check_prereqs() {
     || die "KOHA_PASS or KOHA_ADMIN_PASS must be set in ${KOHA_ENV_FILE}"
   if [[ "${KOHA_IMAGE_MODE}" == "prod" ]]; then
     [[ -f "${KOHA_COMPOSE_PROD_FILE}" ]] || die "docker-compose.prod.yml not found"
+    reject_demo_credentials
   fi
   if [[ "${KOHA_MANAGE_SHARED_SERVICES:-yes}" != "no" ]]; then
     [[ -f "${OPENSEARCH_DIR}/docker-compose.yml" ]] \
@@ -1286,7 +1309,9 @@ follow_logs() {
         echo -e "${GREEN}${BOLD}║${RESET}  Direct (fallback, no DNS needed):║${RESET}"
         echo -e "${GREEN}${BOLD}║${RESET}    OPAC    : http://localhost:${KOHA_OPAC_PORT}║${RESET}"
         echo -e "${GREEN}${BOLD}║${RESET}    Staff   : http://localhost:${KOHA_INTRANET_PORT}║${RESET}"
-        echo -e "${GREEN}${BOLD}║${RESET}  Login     : ${KOHA_USER} / ${KOHA_PASS}║${RESET}"
+        local login_note="${KOHA_USER} / ${KOHA_PASS}"
+        [[ "${KOHA_IMAGE_MODE}" == "prod" ]] && login_note="${KOHA_USER} / (password from ${KOHA_ENV_FILE##*/})"
+        echo -e "${GREEN}${BOLD}║${RESET}  Login     : ${login_note}║${RESET}"
         echo -e "${GREEN}${BOLD}║${RESET}  Dashbrd   : ${proto}://${DASHBOARDS_DOMAIN}${port_suffix}║${RESET}"
         echo -e "${GREEN}${BOLD}║${RESET}  Traefik   : http://localhost:${TRAEFIK_DASHBOARD_PORT}║${RESET}"
         local demo_note; demo_note="$( [[ "${LOAD_DEMO_DATA:-yes}" == "no" ]] && echo "clean (no demo data)" || echo "with demo data" )"

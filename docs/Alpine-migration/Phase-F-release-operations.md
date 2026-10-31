@@ -149,6 +149,15 @@ commands as part of routine release or rollback.
 - In prod mode with `--no-fresh-db` the helper may log "bootstrap marker
   missing"; this is harmless, as the container decides by inspecting the DB.
 
+## Demo credentials versus production secrets
+
+`env/demo-credentials.env` holds public, non-secret demo passwords (all
+prefixed `demo-`) so anyone can run a test session; copy them into your own env
+file. A real deployment must use its own untracked `KOHA_ENV_FILE` with unique
+values. `check_prereqs` in `--image-mode prod` refuses any credential that
+starts with `demo-` or `change_me`, or equals `password`/`koha`, unless
+`KOHA_ALLOW_DEMO_CREDENTIALS=yes` is set (throwaway tests only).
+
 ## Pre-deployment backup and upgrade
 
 Run upgrades in a planned maintenance window. Take the backup before changing
