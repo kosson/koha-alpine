@@ -2,9 +2,11 @@
 
 **Date:** 2026-10-31  
 **Branch:** `phase`  
-**Result:** **PARTIAL** — database-level backup, cross-version restore, prior-image
-recovery, and OpenSearch rebuild/search passed on isolated resources. This is
-not full disaster-recovery acceptance or authorization for production use.
+**Result:** **PASS (rehearsal)** after the closure pass recorded in the final
+addendum. The first pass was PARTIAL (database-level only); the closure pass
+added RabbitMQ, host-asset and encrypted-archive recovery, a failed-rollback
+scenario and a real `restore` run. Production asset inventory and RTO/RPO
+approval remain owner items (G7/G9).
 
 ## Outcome
 
@@ -16,10 +18,9 @@ record written after the backup did not. The previous image started healthy
 against the restored schema. OpenSearch was rebuilt from the restored Koha
 database and returned the pre-backup record in a title search.
 
-G5 remains **PARTIAL**. RabbitMQ volume state, generated private keys and real
-host-mounted data, an intentionally failed-upgrade scenario, and the helper's
-full restore command were not exercised. The built-in archive is not encrypted
-and does not include those external assets.
+The first pass left G5 **PARTIAL**: RabbitMQ state, private keys/host assets,
+a failed-upgrade scenario and the helper's full restore command were not
+exercised. Those gaps were closed in the addendum below.
 
 ## Isolation and provenance
 
@@ -127,14 +128,15 @@ state was tested. OpenSearch data was rebuilt rather than snapshot-restored.
 
 ## Restore-helper scope and remaining work
 
-The `stack-alpine.sh restore` command was not run. Its current path overwrites
+In the first pass the `stack-alpine.sh restore` command was not run. Its then-current path overwrites
 host configuration and starts/stops OpenSearch and Traefik through fixed
 Compose locations, so it was not safe to invoke against a second isolated
 project. The database restore was performed manually from the generated
 archive into the new project; it does not validate the helper's full restore
 workflow.
 
-Before G5 can pass:
+Open items at the end of the first pass (closed in the addendum below, except
+the owner decisions in item 5):
 
 1. Define and test an isolated full restore workflow that cannot touch shared
    OpenSearch, Traefik, or host-mounted paths.
@@ -145,6 +147,97 @@ Before G5 can pass:
 4. Exercise recovery from a deliberately failed candidate upgrade.
 5. Decide whether the measured recovery window and lost-write boundary meet
    the service owner's requirements; arrange encryption for off-host backups.
+
+## Addendum — full G5 closure rehearsal (2026-10-31)
+
+The first pass left G5 PARTIAL. This second pass closed each open item in one
+disposable project (`koha-g5f`, project-scoped volumes, no host ports, its own
+single-node OpenSearch with the project's ICU image) using synthetic secrets.
+The real `stack-alpine.sh` was run from an isolated helper copy; the source DB
+container/volume and shared Traefik/OpenSearch/global networks were not touched.
+
+### Root cause of the RabbitMQ "keys" problem
+
+Two defects, both reproduced:
+
+1. **Volume never persisted across container recreation.** The official image
+   names its Erlang node `rabbit@<container hostname>`. Compose recreates the
+   container with a new random hostname, so each recreation created a new empty
+   broker directory inside `koha-rabbitmq-data` and orphaned the previous one
+   (three node directories were found after three recreations). Users,
+   permissions and queues were therefore never preserved, and a restored volume
+   would never have been picked up.
+2. **Credentials are only seeded into an empty broker.** `RABBITMQ_DEFAULT_*`
+   are ignored once state exists, so a rotated/restored `KOHA_RABBITMQ_PASS`
+   would not reach the broker and Koha's `MESSAGE_BROKER_PASS` would be rejected.
+
+Observed failure mode: after a candidate upgrade with a rotated broker
+password, a naive rollback (prior image + prior env) reported the container
+`healthy` with schema `26.0600003` but **0 STOMP connections**, and the broker
+rejected the original password. The Koha health check does not detect a broker
+outage, so check `rabbitmqctl list_stomp_connections` after any restore.
+
+### Changes
+
+- `docker-compose-alpinekoha.yml`: `hostname: rabbitmq` pins the node name.
+  Verified: a marker user created before `up --force-recreate rabbitmq` was
+  still present afterwards (one node directory in the volume).
+- `stack-alpine.sh`:
+  - `start_koha` now runs `reconcile_rabbitmq_credentials` (idempotent: ensures
+    vhost, adds or resets the user password, sets permissions from the env).
+  - `backup` stores `rabbitmq/definitions.json` (users/hashes, vhosts,
+    permissions; `0600`, dirs `0700`). Queue contents are transient and are
+    deliberately not backed up.
+  - `KOHA_BACKUP_ASSET_PATHS` (absolute paths, space separated) adds
+    `assets/assets.tar` (modes preserved); `restore` re-extracts it before
+    services start. `KOHA_ASSET_RESTORE_ROOT` redirects extraction for dry runs.
+  - `KOHA_BACKUP_GPG_RECIPIENT` encrypts the finished archive to `*.gpg` and
+    removes the plaintext; `restore` decrypts `*.gpg` transparently.
+  - Isolation switches: `KOHA_EXTRA_COMPOSE_FILES` adds per-project compose
+    overrides; `KOHA_MANAGE_SHARED_SERVICES=no` makes `restore` and the
+    prerequisite check leave shared OpenSearch/Traefik alone, and stops
+    `ensure_extra_networks` creating global networks. A first run without this
+    guard created the global `knonikl` network (no containers; removed again).
+- Static tests: 41 checks (was 29); full suite 313 passed, 0 failed, 29 skipped.
+
+### Rehearsal result
+
+| Step | Evidence |
+|---|---|
+| Baseline | prior `26.05.01-1` image healthy at schema `26.0501000`; 2 STOMP connections; one synthetic record imported |
+| Backup (real helper, Koha stopped) | archive `0600`; contains env files, dump, `rabbitmq/definitions.json` (user `koha`, vhost `koha_kohadev`), `assets.tar`; no global network created |
+| Upgrade | candidate `26.06.00.003` healthy at `26.0600003`; broker password rotated; post-backup marker written |
+| Failed rollback | prior image + prior env on upgraded DB: `healthy` but 0 STOMP, original password rejected |
+| Asset loss | removed the OpenSearch CA and the MariaDB CA/client private keys; widened a cert's mode |
+| Real `restore` | helper reported "Restore complete" 17 s after start; Koha healthy within the following polling interval; schema `26.0501000`; post-backup marker absent; pre-backup record present; 2 STOMP connections; original password accepted |
+| Assets | sha256 and file modes of all 11 files identical before loss and after restore (key contents never printed) |
+| OpenSearch | rebuild (`koha-elasticsearch --rebuild --reset --delete`) indexed the record; search returned 1 hit; CA restored from the archive still matched the cluster |
+| Encrypted restore | archive made with `KOHA_BACKUP_GPG_RECIPIENT` (test key in a temporary keyring) restored through the helper; schema `26.0501000`, healthy |
+
+Notes: the "failed upgrade" injected by revoking DDL privileges did not fail,
+because bootstrap upgrades with the root DB credential; the failure exercised
+instead is the broken rollback above. On this 91%-full host OpenSearch's disk
+watermark blocked index creation until disabled for the rehearsal cluster, and
+the stock OpenSearch image lacks the ICU plugin; both are rehearsal-environment
+effects, not product defects. Cleanup removed the project, its three volumes,
+network, the rebuilt prior image and the workspace (including the test keyring).
+
+### Findings for the owner
+
+- The MariaDB TLS private keys under `files-alpine/mariadb-ssl/` (including
+  `ca-key.pem`, `client-key.pem`) are **tracked in git**. They are test material
+  for this repository, but production must generate its own and include their
+  paths in `KOHA_BACKUP_ASSET_PATHS`. Existing G0 history decision unchanged.
+- Production asset inventory (real certificates, Traefik ACME data, OpenSearch
+  generated certificates) is deployment-specific and must be listed by the
+  owner; the mechanism is proven, the real inventory is not.
+- RabbitMQ queue contents are not preserved by design; consumers must tolerate
+  re-enqueued background jobs after a restore.
+- RTO/RPO sign-off (recovery window ~1–2 min excluding provisioning and
+  re-index; loss of all writes after the backup) belongs to G9.
+
+**Result: G5 PASS (rehearsal)**, with the owner-dependent items above carried to
+G7/G9.
 
 ## Validation and code changes
 

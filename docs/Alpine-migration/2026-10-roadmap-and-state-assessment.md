@@ -18,7 +18,7 @@ That status needs qualification:
 5. An earlier review reported merge-conflict markers in configuration, but the current inspection found no conflict markers or duplicate keys in `env/.env`. The tracked environment and OpenSearch auth templates previously contained credential-capable values; those values were scrubbed from the current worktree, and the owner reports potentially active credentials have been rotated. Historical Git/remotes still need an owner-approved disposition before G0 can pass. `OpenSearch-3.6/.env` remains ignored and local.
 6. Re-running Phase 4 guardrails exposed drift in `Dockerfile-Alpine` and `koha-worker`: the development image did not install its Alpine command overlays or `busybox-extras`, and the worker wrapper missed Koha's current `misc/workers` path and queue options. Those gaps were restored and exercised in the Phase D image.
 
-The Alpine implementation has substantial evidence for the recorded pinned release: production and development images started in separate isolated projects, a fresh development database bootstrapped and passed Plack/API and browser checks, lifecycle checks passed, runtime reduction/least-privilege gates passed, and G2–G4 passed on 2026-10-30. G4 rehearsed an Ubuntu database copy using a production image built from the source's exact Koha commit; one malformed MARCXML record already present in the source is documented as a data-quality caveat. G5's 2026-10-31 rehearsal demonstrated database backup/restore across Koha versions and OpenSearch rebuild/search, but remains **PARTIAL** because RabbitMQ state, private keys/real host assets, failed-upgrade handling, and the built-in full restore path are unproven. **The overall end-to-end migration is not complete or accepted.** G6's volume-identity/cutover proof, G7's operations readiness, G8's independent operator walkthrough, and G9's owner sign-off remain open. See the [end-to-end acceptance gates](./End-to-end-migration-acceptance.md) and [G5 tracker record](../TRACKER/2026-10-31%20%E2%80%94%20G5%20backup%20and%20recovery%20rehearsal.md).
+The Alpine implementation has substantial evidence for the recorded pinned release: production and development images started in separate isolated projects, a fresh development database bootstrapped and passed Plack/API and browser checks, lifecycle checks passed, runtime reduction/least-privilege gates passed, and G2–G4 passed on 2026-10-30. G4 rehearsed an Ubuntu database copy using a production image built from the source's exact Koha commit; one malformed MARCXML record already present in the source is documented as a data-quality caveat. G5's 2026-10-31 rehearsal passed after a closure pass: helper backup/restore of the database, RabbitMQ credentials/definitions and host TLS assets (optionally GPG-encrypted), failed-rollback handling, the real restore command, and OpenSearch rebuild were verified on isolated resources, and the RabbitMQ volume-persistence defect was fixed. Production asset inventory and RTO/RPO sign-off remain owner items. **The overall end-to-end migration is not complete or accepted.** G6's volume-identity/cutover proof, G7's operations readiness, G8's independent operator walkthrough, and G9's owner sign-off remain open. See the [end-to-end acceptance gates](./End-to-end-migration-acceptance.md) and [G5 tracker record](../TRACKER/2026-10-31%20%E2%80%94%20G5%20backup%20and%20recovery%20rehearsal.md).
 
 ## Evidence-based implementation map
 
@@ -151,10 +151,11 @@ end-to-end acceptance gates remain open until their evidence is recorded:
   item/branch counts, authenticated workflows, TLS, and OpenSearch search passed.
   One pre-existing malformed MARCXML record is recorded as a source-data caveat;
   see the G4 tracker record and acceptance matrix.
-- [ ] G5: **PARTIAL (2026-10-31).** Database backup/restore, previous-image
-  recovery, and OpenSearch rebuild/search were observed on separate volumes.
-  RabbitMQ state, private keys/real host assets, an intentional failed upgrade,
-  and the helper's full restore path remain open; see the G5 tracker record.
+- [x] G5: **PASS - rehearsal (2026-10-31).** Helper backup/restore covers the
+  DB, RabbitMQ definitions, host TLS assets and optional GPG encryption; a
+  failed-rollback scenario, the real `restore` command and OpenSearch rebuild
+  were verified on isolated resources. Production asset inventory and RTO/RPO
+  sign-off remain for G7/G9; see the G5 tracker record.
 - [ ] G6: Verify the exact production Compose project and DB/RabbitMQ volumes;
   prove no fresh-bootstrap/reset path is used for migrated data.
 - [ ] G7: Verify production secret/TLS controls, health/monitoring, retention,
@@ -165,8 +166,8 @@ end-to-end acceptance gates remain open until their evidence is recorded:
 See the [acceptance matrix and evidence requirements](./End-to-end-migration-acceptance.md).
 Until all required gates pass, use the status: **Alpine image implementation
 validated for the recorded releases; the G4 Ubuntu-data rehearsal passed and
-the G5 database recovery path is partially validated, but full production
-recovery and owner approval remain pending.**
+G5 backup/restore recovery passed as an isolated rehearsal, but production
+asset inventory, cutover and owner approval remain pending.**
 
 ## Current review changes
 

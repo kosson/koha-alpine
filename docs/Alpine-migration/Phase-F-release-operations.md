@@ -100,7 +100,8 @@ secrets:
   separately reviewed operator-controlled action.
 
 The backup helper copies the environment files into its archive without
-encrypting them. Store that archive as confidential data. The archive, staged
+encrypting them unless `KOHA_BACKUP_GPG_RECIPIENT` is set (see below). Store
+that archive as confidential data. The archive, staged
 configuration files, database dump, and manifest use `0600` permissions; the
 staging subdirectories use `0700`. Restored environment files are also set to
 `0600`. Keep the containing backup directory access-controlled as well.
@@ -205,10 +206,44 @@ registry before starting recovery. Changes written after the backup point will
 be lost when the archived database is restored. Recheck service health and
 application behavior after recovery.
 
-The helper restores only its documented files and MariaDB dump; it does not
-restore RabbitMQ/OpenSearch volumes or TLS/private-key assets. Restore those
-separately where required. For a new host, recover and verify required
-certificates, host-mounted files, and external services before starting Koha.
+The helper restores the env files, the MariaDB dump, RabbitMQ users/vhosts/
+permissions and any host assets listed in the archive. On `start_koha` it
+re-applies the broker user, password and permissions from the (restored) env,
+because `RABBITMQ_DEFAULT_*` only seed an empty broker. RabbitMQ queue contents
+and OpenSearch data are not restored: rebuild the index afterwards with
+`koha-elasticsearch --rebuild --reset --delete <instance>`. After restore,
+verify `rabbitmqctl list_stomp_connections` is non-empty; the Koha health check
+stays green even when the broker rejects Koha. For a new host, provide the
+certificates and host-mounted files (or let the archive restore them) before
+starting Koha.
+
+### Host assets and encrypted archives
+
+Set `KOHA_BACKUP_ASSET_PATHS` (absolute, space-separated files or directories,
+e.g. TLS keys/certificates, OpenSearch CA, Traefik ACME data) in the env file or
+environment. They are archived with modes preserved and re-extracted by
+`restore`; `KOHA_ASSET_RESTORE_ROOT` redirects extraction for dry runs. Set
+`KOHA_BACKUP_GPG_RECIPIENT` to encrypt the finished archive to a public key
+(`*.gpg`, plaintext removed); `restore --input file.gpg` decrypts it with the
+operator's private key. The key itself must be stored separately from the
+backups. Note that `files-alpine/mariadb-ssl/*-key.pem` in this repository are
+test keys tracked in git; production must generate and back up its own.
+
+### RabbitMQ data and node name
+
+The broker's data directory is keyed by node name (`rabbit@<hostname>`). The
+compose file pins `hostname: rabbitmq`, so users and queues now survive
+container recreation. Do not remove that setting: without it each recreation
+starts an empty broker and the named volume is orphaned.
+
+### Rehearsing the restore command safely
+
+`KOHA_EXTRA_COMPOSE_FILES` adds compose override files to every Koha compose
+call (for example to drop host ports and rename networks), and
+`KOHA_MANAGE_SHARED_SERVICES=no` stops `restore` from stopping/starting the
+shared OpenSearch and Traefik stacks or creating global Docker networks. Use
+both, a separate `KOHA_ENV_FILE`, a distinct `KOHA_PROD_PROJECT`, and a copy of
+the helper, so nothing outside the disposable project is touched.
 
 ## Restore rehearsal
 

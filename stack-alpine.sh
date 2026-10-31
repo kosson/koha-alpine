@@ -377,6 +377,12 @@ koha_compose() {
     compose_args+=( -f "${KOHA_COMPOSE_PROD_FILE}" )
   fi
 
+  # Optional per-project overrides (e.g. an isolated rehearsal project).
+  local extra_file
+  for extra_file in ${KOHA_EXTRA_COMPOSE_FILES:-}; do
+    compose_args+=( -f "${extra_file}" )
+  done
+
   docker compose \
     "${compose_args[@]}" \
     --env-file "${KOHA_ENV_FILE}" \
@@ -420,10 +426,12 @@ check_prereqs() {
   if [[ "${KOHA_IMAGE_MODE}" == "prod" ]]; then
     [[ -f "${KOHA_COMPOSE_PROD_FILE}" ]] || die "docker-compose.prod.yml not found"
   fi
-  [[ -f "${OPENSEARCH_DIR}/docker-compose.yml" ]] \
-    || die "OpenSearch-3.6/docker-compose.yml not found"
-  [[ -f "${TRAEFIK_DIR}/docker-compose.yaml" ]] \
-    || die "traefik/docker-compose.yaml not found"
+  if [[ "${KOHA_MANAGE_SHARED_SERVICES:-yes}" != "no" ]]; then
+    [[ -f "${OPENSEARCH_DIR}/docker-compose.yml" ]] \
+      || die "OpenSearch-3.6/docker-compose.yml not found"
+    [[ -f "${TRAEFIK_DIR}/docker-compose.yaml" ]] \
+      || die "traefik/docker-compose.yaml not found"
+  fi
   ok "Prerequisites OK"
 }
 
@@ -562,6 +570,9 @@ ensure_frontend_network() {
 # them. Used by the Koha and OpenSearch compose files.
 ensure_extra_networks() {
   local net name
+  if [[ "${KOHA_MANAGE_SHARED_SERVICES:-yes}" == "no" ]]; then
+    return 0
+  fi
   for net in knonikl opensearch-36_osearch; do
     if ! docker network inspect "$net" >/dev/null 2>&1; then
       log "Creating '$net' Docker network..."
@@ -852,6 +863,110 @@ reset_database() {
   ok "Database '${DB_NAME}' ready."
 }
 
+rabbitmq_running() {
+  [[ -n "$(koha_compose ps --status running -q rabbitmq 2>/dev/null)" ]]
+}
+
+wait_rabbitmq_ready() {
+  local i
+  for i in $(seq 1 60); do
+    if koha_compose exec -T rabbitmq rabbitmq-diagnostics -q check_running >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  die "RabbitMQ did not become ready."
+}
+
+# RABBITMQ_DEFAULT_* only seed an empty volume, so a restored or rotated
+# volume must be reconciled with the credentials Koha will be given.
+reconcile_rabbitmq_credentials() {
+  log "Reconciling RabbitMQ user, vhost and permissions with the restored configuration..."
+  koha_compose up -d rabbitmq
+  wait_rabbitmq_ready
+  koha_compose exec -T rabbitmq sh -c '
+    set -e
+    u="$RABBITMQ_DEFAULT_USER"; p="$RABBITMQ_DEFAULT_PASS"; v="$RABBITMQ_DEFAULT_VHOST"
+    rabbitmqctl -q list_vhosts --no-table-headers | grep -qx -- "$v" || rabbitmqctl -q add_vhost "$v"
+    if rabbitmqctl -q list_users --no-table-headers | cut -f1 | grep -qx -- "$u"; then
+      rabbitmqctl -q change_password "$u" "$p"
+    else
+      rabbitmqctl -q add_user "$u" "$p"
+    fi
+    rabbitmqctl -q set_user_tags "$u" administrator
+    rabbitmqctl -q set_permissions -p "$v" "$u" ".*" ".*" ".*"
+  ' >/dev/null || die "Could not reconcile RabbitMQ credentials."
+  ok "RabbitMQ credentials reconciled."
+}
+
+backup_rabbitmq_definitions() {
+  local dest_dir="$1"
+  mkdir -p "${dest_dir}"
+  if ! rabbitmq_running; then
+    koha_compose up -d rabbitmq >/dev/null 2>&1 || true
+  fi
+  if rabbitmq_running; then wait_rabbitmq_ready; else
+    warn "RabbitMQ could not be started; broker definitions were not included in the backup."
+    return 0
+  fi
+  if ( umask 077; koha_compose exec -T rabbitmq rabbitmqctl -q export_definitions - > "${dest_dir}/definitions.json" 2>/dev/null ) \
+    && [[ -s "${dest_dir}/definitions.json" ]]; then
+    chmod 0600 "${dest_dir}/definitions.json"
+    ok "RabbitMQ definitions exported (users, vhosts, permissions; queue contents are transient)."
+  else
+    warn "RabbitMQ definitions export failed; continuing without it."
+  fi
+}
+
+# Host-side assets (TLS keys/certificates, CA bundles) that live outside the
+# database and env files. Paths come from KOHA_BACKUP_ASSET_PATHS (space
+# separated, absolute) in the environment or the main Koha env file.
+backup_asset_paths() {
+  local paths="${KOHA_BACKUP_ASSET_PATHS:-$(_env_val "${KOHA_ENV_FILE}" KOHA_BACKUP_ASSET_PATHS "")}"
+  echo "${paths}"
+}
+
+backup_host_assets() {
+  local dest_dir="$1" path rel
+  local paths; paths="$(backup_asset_paths)"
+  [[ -n "${paths}" ]] || return 0
+  mkdir -p "${dest_dir}"
+  : > "${dest_dir}/paths.txt"
+  local rels=()
+  for path in ${paths}; do
+    [[ "${path}" == /* ]] || die "KOHA_BACKUP_ASSET_PATHS entries must be absolute: ${path}"
+    [[ -e "${path}" ]] || die "Backup asset path does not exist: ${path}"
+    rel="${path#/}"
+    echo "${path}" >> "${dest_dir}/paths.txt"
+    rels+=( "${rel}" )
+  done
+  ( umask 077; tar -C / -cpf "${dest_dir}/assets.tar" "${rels[@]}" )
+  chmod 0600 "${dest_dir}/paths.txt" "${dest_dir}/assets.tar"
+  ok "Host assets archived: $(wc -l < "${dest_dir}/paths.txt") path(s) (modes preserved)."
+}
+
+restore_host_assets() {
+  local src_dir="$1" root="${KOHA_ASSET_RESTORE_ROOT:-/}"
+  [[ -f "${src_dir}/assets.tar" ]] || { warn "No host assets in this backup."; return 0; }
+  log "Restoring host assets under ${root} (modes preserved)..."
+  mkdir -p "${root}"
+  tar -C "${root}" -xpf "${src_dir}/assets.tar"
+  ok "Host assets restored."
+}
+
+# Optional off-host protection: set KOHA_BACKUP_GPG_RECIPIENT to encrypt the
+# finished archive to a public key (output gets a .gpg suffix).
+encrypt_backup_archive() {
+  local archive="$1" recipient="${KOHA_BACKUP_GPG_RECIPIENT:-}"
+  [[ -n "${recipient}" ]] || return 0
+  command -v gpg >/dev/null 2>&1 || die "KOHA_BACKUP_GPG_RECIPIENT is set but gpg is not installed."
+  ( umask 077; gpg --batch --yes --trust-model always --encrypt --recipient "${recipient}" --output "${archive}.gpg" "${archive}" ) \
+    || die "GPG encryption failed."
+  chmod 0600 "${archive}.gpg"
+  rm -f "${archive}"
+  ok "Backup encrypted to ${archive}.gpg (plaintext archive removed)."
+}
+
 create_backup_bundle() {
   hdr "Creating backup bundle"
 
@@ -880,7 +995,7 @@ created_at_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 repo_root=${SCRIPT_DIR}
 koha_instance=${KOHA_INSTANCE}
 database=${DB_NAME}
-includes=env/.env, traefik/.env, OpenSearch-3.6/.env, database dump
+includes=env/.env, traefik/.env, OpenSearch-3.6/.env, database dump, rabbitmq definitions, optional host assets
 EOF
 
   log "Dumping MariaDB database '${DB_NAME}'..."
@@ -889,7 +1004,11 @@ EOF
     --single-transaction --routines --triggers --events "${DB_NAME}" \
     | gzip -9 > "${stage_dir}/database/${DB_NAME}.sql.gz"
 
-  chmod 0700 "${stage_dir}/config" "${stage_dir}/database"
+  backup_rabbitmq_definitions "${stage_dir}/rabbitmq"
+  backup_host_assets "${stage_dir}/assets"
+
+  chmod 0700 "${stage_dir}/config" "${stage_dir}/database" "${stage_dir}/rabbitmq"
+  [[ ! -d "${stage_dir}/assets" ]] || chmod 0700 "${stage_dir}/assets"
   chmod 0600 \
     "${stage_dir}/manifest.txt" \
     "${stage_dir}/database/${DB_NAME}.sql.gz"
@@ -897,11 +1016,12 @@ EOF
   log "Packing backup archive at ${output_path}..."
   ( umask 077; tar -C "${stage_dir}" -czf "${output_path}" . )
   chmod 0600 "${output_path}"
+  encrypt_backup_archive "${output_path}"
 
   rm -rf "${stage_dir}"
   trap - RETURN
 
-  ok "Backup written to ${output_path}"
+  ok "Backup written to ${output_path}$( [[ -n "${KOHA_BACKUP_GPG_RECIPIENT:-}" ]] && echo .gpg )"
 }
 
 restore_backup_bundle() {
@@ -923,13 +1043,21 @@ restore_backup_bundle() {
 
   stop_koha
   stop_support_services
-  stop_opensearch
-  stop_traefik
+  if [[ "${KOHA_MANAGE_SHARED_SERVICES:-yes}" != "no" ]]; then
+    stop_opensearch
+    stop_traefik
+  fi
 
   stage_dir="$(mktemp -d)"
   trap 'rm -rf "${stage_dir}"' RETURN
 
-  tar -xzf "${archive_path}" -C "${stage_dir}"
+  if [[ "${archive_path}" == *.gpg ]]; then
+    command -v gpg >/dev/null 2>&1 || die "gpg is required to restore an encrypted archive."
+    ( umask 077; gpg --batch --yes --decrypt --output "${stage_dir}/archive.tar.gz" "${archive_path}" ) \
+      || die "GPG decryption failed."
+    archive_path="${stage_dir}/archive.tar.gz"
+  fi
+  tar -xzf "${archive_path}" -C "${stage_dir}" --exclude=./archive.tar.gz
 
   [[ -f "${stage_dir}/config/env.env" ]] || die "Backup archive is missing config/env.env"
   [[ -f "${stage_dir}/config/traefik.env" ]] || die "Backup archive is missing config/traefik.env"
@@ -946,6 +1074,7 @@ restore_backup_bundle() {
   fi
 
   ok "Configuration files restored."
+  restore_host_assets "${stage_dir}/assets"
 
   start_support_services
   wait_db_ready
@@ -960,12 +1089,16 @@ restore_backup_bundle() {
     warn "No database dump found in the backup archive; the database was only reinitialized."
   fi
 
-  ensure_opensearch_certs
-  start_traefik
-  start_opensearch
-  wait_opensearch_green
-  ensure_opensearch_auth
-  start_opensearch_dashboards
+  if [[ "${KOHA_MANAGE_SHARED_SERVICES:-yes}" != "no" ]]; then
+    ensure_opensearch_certs
+    start_traefik
+    start_opensearch
+    wait_opensearch_green
+    ensure_opensearch_auth
+    start_opensearch_dashboards
+  else
+    log "KOHA_MANAGE_SHARED_SERVICES=no: shared Traefik/OpenSearch left untouched."
+  fi
 
   export USE_EXISTING_DB=yes
   start_koha
@@ -1025,6 +1158,7 @@ start_koha() {
   export LOAD_DEMO_DATA
   local demo_label; demo_label="$( [[ "${LOAD_DEMO_DATA}" == "no" ]] && echo "clean (no demo data)" || echo "with demo data" )"
   log "Demo data mode: ${demo_label}"
+  reconcile_rabbitmq_credentials
   koha_compose up -d --force-recreate koha
   ok "Koha container started (${demo_label})."
 }

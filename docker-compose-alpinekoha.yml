@@ -29,6 +29,10 @@ services:
   rabbitmq:
     image: ${RABBITMQ_IMAGE:-rabbitmq:3-management}
     restart: always
+    # RabbitMQ keys its data directory by node name (rabbit@<hostname>). Without a
+    # fixed hostname every container recreation starts an empty broker and orphans
+    # the previous state in the volume.
+    hostname: rabbitmq
     command:
         - sh
         - -lc

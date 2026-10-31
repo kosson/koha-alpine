@@ -51,7 +51,23 @@ assert_contains "backup uses mysqldump" 'mysqldump -uroot -p"${KOHA_DB_ROOT_PASS
 assert_contains "backup archive is created with a restrictive umask" '( umask 077; tar -C "${stage_dir}" -czf "${output_path}" . )'
 assert_contains "backup archive permissions are restricted" 'chmod 0600 "${output_path}"'
 assert_contains "backup configuration copies are restricted" 'chmod 0600 \'
-assert_contains "backup staging directories are restricted" 'chmod 0700 "${stage_dir}/config" "${stage_dir}/database"'
+assert_contains "backup staging directories are restricted" 'chmod 0700 "${stage_dir}/config" "${stage_dir}/database" "${stage_dir}/rabbitmq"'
+assert_contains "backup exports RabbitMQ definitions" 'rabbitmqctl -q export_definitions -'
+assert_contains "Koha start reconciles RabbitMQ credentials" '  reconcile_rabbitmq_credentials'
+assert_contains "backup archives host assets with modes preserved" 'tar -C / -cpf "${dest_dir}/assets.tar"'
+assert_contains "restore re-extracts host assets with modes preserved" 'tar -C "${root}" -xpf "${src_dir}/assets.tar"'
+assert_contains "backup can be GPG-encrypted for off-host copies" 'KOHA_BACKUP_GPG_RECIPIENT'
+assert_contains "restore can decrypt GPG archives" 'gpg --batch --yes --decrypt'
+assert_contains "shared services can be left unmanaged during restore" 'KOHA_MANAGE_SHARED_SERVICES:-yes'
+assert_contains "extra compose overrides are supported" 'KOHA_EXTRA_COMPOSE_FILES'
+assert_contains "global networks are not created in unmanaged mode" 'if [[ "${KOHA_MANAGE_SHARED_SERVICES:-yes}" == "no" ]]; then'
+if grep -qF -- "    hostname: rabbitmq" "${SCRIPT_DIR_T:-$(dirname "${STACK_SH}")}/docker-compose-alpinekoha.yml"; then
+    ok "RabbitMQ hostname is pinned in compose"
+else
+    not_ok "RabbitMQ hostname is pinned in compose"
+fi
+assert_contains "RabbitMQ reconcile resets the user password" 'rabbitmqctl -q change_password'
+assert_contains "RabbitMQ readiness uses check_running" 'rabbitmq-diagnostics -q check_running'
 assert_contains "backup database dump permissions are restricted" '"${stage_dir}/database/${DB_NAME}.sql.gz"'
 assert_contains "backup manifest permissions are restricted" '"${stage_dir}/manifest.txt"'
 assert_contains "restore imports the dump" 'gzip -dc "${stage_dir}/database/${DB_NAME}.sql.gz"'
