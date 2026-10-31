@@ -100,7 +100,10 @@ secrets:
   separately reviewed operator-controlled action.
 
 The backup helper copies the environment files into its archive without
-encrypting them. Store that archive as confidential data.
+encrypting them. Store that archive as confidential data. The archive, staged
+configuration files, database dump, and manifest use `0600` permissions; the
+staging subdirectories use `0700`. Restored environment files are also set to
+`0600`. Keep the containing backup directory access-controlled as well.
 
 ## Compose project names and persistent volumes
 

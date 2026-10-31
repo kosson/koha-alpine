@@ -2,13 +2,15 @@
 
 **Assessment date:** 2026-10-29
 
-**Status updated:** 2026-10-30
+**Status updated:** 2026-10-31
 **Current conclusion:** The Alpine implementation has passed substantial
 fresh-install and runtime validation for Koha `v26.05.01-1`. The isolated G4
 Ubuntu-data rehearsal passed on Koha `26.06.00.003` at the source commit, with
-one pre-existing malformed MARCXML record documented. The overall
-Ubuntu-to-Alpine migration and production recovery are **not yet accepted**;
-G5–G9 remain open.
+one pre-existing malformed MARCXML record documented. G5 has partial
+database-level backup, version-upgrade, restore, rollback, and OpenSearch
+rebuild evidence, but full external-state recovery and failed-upgrade handling
+remain unproven. The overall Ubuntu-to-Alpine migration and production recovery
+are **not yet accepted**; G6–G9 remain open.
 
 This document defines the evidence required before declaring the migration
 complete. It distinguishes a working Alpine image from a proven migration and
@@ -36,7 +38,7 @@ production volumes.
 | G2 | **Required / PASS (2026-10-30)** | Pinned release and Debian-compatibility audit | The rebuilt candidate passed a manifest/command disposition audit and Koha's configured outbound Z39.50 search path against an isolated target; YAZ/ZOOM and MARC parsing succeeded. See the dated G2 tracker addendum for image identity, exact results, overlays, cron regression, and explicit exclusions. |
 | G3 | **Required / PASS (2026-10-30)** (16/16 full workflow on the earlier candidate; current G2 candidate also passed a fresh OpenSearch TLS, rebuild, MARCXML import, and OPAC-search recheck; see tracker G3 addenda 3–4) | Koha operational feature acceptance | On a fresh isolated production-mode stack, verify authenticated staff login, OPAC, catalogue search, one representative catalogue create/edit, patron lookup, a controlled checkout/checkin, and a background job. If OpenSearch is enabled, verify cluster/auth health, index build or rebuild, and a Koha search returning expected records. Include MARC import if it is part of the deployment's required operations. Record screenshots/log identifiers and test data cleanup. |
 | G4 | **Required / PASS (2026-10-30; source-data caveat recorded)** | Existing Ubuntu-data migration rehearsal | A protected, transaction-consistent source copy was imported into a verified-isolated project and started with explicit existing-data settings on an Alpine image built from the exact source Koha commit. Schema and baseline counts reconciled; staff/API authentication, patron lookup, MARC import/edit, checkout/checkin, background indexing, TLS, and migrated-record search passed. One malformed MARCXML row was present in both source and target and is documented as a pre-existing data-quality limitation. See the [G4 tracker record](../TRACKER/2026-10-30%20%E2%80%94%20G4%20Ubuntu-data%20migration%20rehearsal.md). |
-| G5 | **Required / NOT RUN** | Backup consistency, restore, and rollback rehearsal | Establish an application write-quiescence/maintenance procedure and test a backup while respecting the actual helper behavior. Restore into separate empty test volumes, not production. Verify database integrity, expected application state, the previous image, and all required external assets. Simulate a failed upgrade and demonstrate restoration of the pre-upgrade DB/config plus recovery of excluded RabbitMQ, OpenSearch, certificates, and host files. Record recovery time and data-loss point. |
+| G5 | **Required / PARTIAL (2026-10-31)** | Backup consistency, restore, and rollback rehearsal | With Koha stopped, a real helper backup was restored into a separate DB volume; the prior image returned healthy at the pre-upgrade schema, and the post-backup test write was absent. A candidate upgrade and restored-DB OpenSearch rebuild/search also passed. RabbitMQ state, private keys/real host assets, an intentional failed-upgrade path, and the helper's full restore command remain untested. See the [G5 tracker record](../TRACKER/2026-10-31%20%E2%80%94%20G5%20backup%20and%20recovery%20rehearsal.md). |
 | G6 | **Required / PARTIAL** | Volume identity and cutover safety | For an existing deployment, identify the exact current Compose project name and its database/RabbitMQ volumes. Configure `KOHA_PROD_PROJECT` to that exact project before an in-place upgrade, or document and rehearse a separate copy/restore migration. Verify the selected volume names before start and after start. Demonstrate that the fresh-start path cannot accidentally reset the migrated database. |
 | G7 | **Required / PARTIAL** | Security and operations readiness | Confirm production secrets are outside Git and not present in build args, labels, or logs; validate TLS trust and client authentication on actual endpoints; check file permissions/capabilities and container health; verify monitoring, log retention, alert ownership, capacity, and restore access. Review base/service image update ownership and pinning policy. Record which host assets and external services are independently protected. |
 | G8 | **Required / PARTIAL** | Documentation and operator handoff | Replace obsolete `stack.sh` runbook commands and unsupported safety claims; link the acceptance, release, and recovery procedures from the README and roadmap. An operator who did not implement the migration must complete a tabletop walkthrough and confirm commands, volume identity, secret handling, escalation, and rollback steps. |
@@ -153,7 +155,9 @@ repeat the rehearsal after fixing them.
 ### 5. Prove backup and recovery (G5–G6)
 
 The current backup helper copies three env files and runs a MariaDB dump using
-`--single-transaction`; it does not stop or quiesce Koha. It does not archive
+`--single-transaction`; it does not stop or quiesce Koha itself. The G5
+rehearsal explicitly stopped the disposable Koha service before invoking it.
+The helper does not archive
 RabbitMQ's named volume, OpenSearch data, generated certificates/private keys,
 or other host assets. The archive is not encrypted by the helper. Until
 consistency and excluded-state recovery are tested, do not describe it as a
@@ -188,15 +192,15 @@ acceptance in the final tracker entry.
 
 ## Current open-gate summary
 
-As of 2026-10-30:
+As of 2026-10-31:
 
 - **Available evidence:** Phase B/E pinned-image and fresh-stack results;
   selected Plack/API/browser checks; lifecycle, worker, cron, broker,
   capability, permission, and health checks; latest local tests (292 passed,
   0 failed, 29 expected opt-in skips); current dev/prod Compose config checks;
-  Dockerfile `buildx --check`; and the isolated G4 Ubuntu-data rehearsal. The
-  local release procedure repeated the tests and both Compose checks
-  successfully.
+  Dockerfile `buildx --check`; the isolated G4 Ubuntu-data rehearsal; and the
+  partial G5 database restore/OpenSearch rebuild. The local release procedure
+  repeated the tests and both Compose checks successfully.
 - **G1 evidence (2026-10-29):** `scripts/validate-release-local.sh` passed end to
   end after storage was freed: 279 tests passed/0 failed/29 expected skips, both
   Compose configs, and uncached `--pull` builds of both images. Koha
@@ -217,9 +221,17 @@ As of 2026-10-30:
   checkout/checkin, broker-backed indexing, MariaDB/OpenSearch TLS, and OPAC
   search passed. One malformed MARCXML row and associated indexer diagnostics
   were already present in the source data; see the dated G4 tracker record.
-- **Not yet demonstrated:** consistent backup and restore; full recovery
-  including excluded assets; production cutover; final service-owner sign-off.
-  G2, G3, and G4 have separate dated PASS evidence.
+- **G5 evidence (2026-10-31, PARTIAL):** a quiesced MariaDB backup was restored
+  into a separate volume; the previous `26.05.01-1` image became healthy at
+  schema `26.0501000`, and the post-backup marker was absent. The
+  `26.06.00.003` candidate upgraded a disposable copy to schema `26.0600003`.
+  A new OpenSearch volume was rebuilt from restored Koha data and returned the
+  pre-backup catalogue marker. RabbitMQ data, private keys/real host assets,
+  an intentionally failed upgrade, and the built-in restore command remain
+  untested; see the dated G5 tracker record.
+- **Still not demonstrated:** full disaster recovery and excluded-state
+  recovery, production cutover, and final service-owner sign-off. G2, G3, and
+  G4 have separate dated PASS evidence; G5 remains partial.
 - **G0 decision (2026-10-29):** the owner chose to leave Git history and
   remotes unchanged (no rewrite) and to document the residual risk: former
   credential-capable values remain retrievable from old commits, clones, forks,

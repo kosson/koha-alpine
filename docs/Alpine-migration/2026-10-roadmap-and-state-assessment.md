@@ -1,6 +1,6 @@
 # Alpine Migration: State Assessment and Forward Roadmap
 
-**Review date:** 2026-10-30
+**Review date:** 2026-10-31
 
 **Branch:** `phase`
 **Scope:** Alpine container adaptation, its Koha Debian compatibility layer, migration records, tracker, and architecture references.
@@ -18,7 +18,7 @@ That status needs qualification:
 5. An earlier review reported merge-conflict markers in configuration, but the current inspection found no conflict markers or duplicate keys in `env/.env`. The tracked environment and OpenSearch auth templates previously contained credential-capable values; those values were scrubbed from the current worktree, and the owner reports potentially active credentials have been rotated. Historical Git/remotes still need an owner-approved disposition before G0 can pass. `OpenSearch-3.6/.env` remains ignored and local.
 6. Re-running Phase 4 guardrails exposed drift in `Dockerfile-Alpine` and `koha-worker`: the development image did not install its Alpine command overlays or `busybox-extras`, and the worker wrapper missed Koha's current `misc/workers` path and queue options. Those gaps were restored and exercised in the Phase D image.
 
-The Alpine implementation has substantial evidence for the recorded pinned release: production and development images started in separate isolated projects, a fresh development database bootstrapped and passed Plack/API and browser checks, lifecycle checks passed, runtime reduction/least-privilege gates passed, and G2–G4 passed on 2026-10-30. G4 rehearsed an Ubuntu database copy using a production image built from the source's exact Koha commit; one malformed MARCXML record already present in the source is documented as a data-quality caveat. **The overall end-to-end migration is not complete or accepted.** G5's backup/restore/rollback rehearsal, G6's volume-identity/cutover proof, G7's operations readiness, G8's independent operator walkthrough, and G9's owner sign-off remain open. See the [end-to-end acceptance gates](./End-to-end-migration-acceptance.md).
+The Alpine implementation has substantial evidence for the recorded pinned release: production and development images started in separate isolated projects, a fresh development database bootstrapped and passed Plack/API and browser checks, lifecycle checks passed, runtime reduction/least-privilege gates passed, and G2–G4 passed on 2026-10-30. G4 rehearsed an Ubuntu database copy using a production image built from the source's exact Koha commit; one malformed MARCXML record already present in the source is documented as a data-quality caveat. G5's 2026-10-31 rehearsal demonstrated database backup/restore across Koha versions and OpenSearch rebuild/search, but remains **PARTIAL** because RabbitMQ state, private keys/real host assets, failed-upgrade handling, and the built-in full restore path are unproven. **The overall end-to-end migration is not complete or accepted.** G6's volume-identity/cutover proof, G7's operations readiness, G8's independent operator walkthrough, and G9's owner sign-off remain open. See the [end-to-end acceptance gates](./End-to-end-migration-acceptance.md) and [G5 tracker record](../TRACKER/2026-10-31%20%E2%80%94%20G5%20backup%20and%20recovery%20rehearsal.md).
 
 ## Evidence-based implementation map
 
@@ -122,7 +122,7 @@ The Alpine implementation has substantial evidence for the recorded pinned relea
 - [x] Document release tagging, source-ref provenance, image labels, rollback, secrets injection, and data-volume backup/restore.
 - [x] Keep completed tracker work as historical evidence and maintain one current status/roadmap entry.
 
-**Implementation complete; validation pending.** The documented procedure covers building, inspecting, deploying, validating, and restoring a versioned production image. Verify it by running `bash scripts/validate-release-local.sh` and rehearsing restore on a disposable project before relying on it in production. Rollback is conditional on a successful pre-upgrade backup and availability of matching images and external TLS/host assets; the bundled backup is not a full-volume snapshot.
+**Implementation complete; core recovery path partially validated.** The documented procedure covers building, inspecting, deploying, validating, and restoring a versioned production image. The 2026-10-31 G5 rehearsal verified a quiesced database backup, a separate-volume restore using the previous image, and an OpenSearch rebuild; it did not validate full external-state recovery or the built-in full restore command. See the [G5 tracker record](../TRACKER/2026-10-31%20%E2%80%94%20G5%20backup%20and%20recovery%20rehearsal.md). Rollback remains conditional on a successful pre-upgrade backup and availability of matching images and external TLS/host assets; the bundled backup is not a full-volume snapshot.
 
 ### End-to-end migration acceptance — not complete
 
@@ -151,8 +151,10 @@ end-to-end acceptance gates remain open until their evidence is recorded:
   item/branch counts, authenticated workflows, TLS, and OpenSearch search passed.
   One pre-existing malformed MARCXML record is recorded as a source-data caveat;
   see the G4 tracker record and acceptance matrix.
-- [ ] G5: Rehearse backup, restore, rollback, and recovery of assets excluded
-  from the built-in MariaDB/config archive.
+- [ ] G5: **PARTIAL (2026-10-31).** Database backup/restore, previous-image
+  recovery, and OpenSearch rebuild/search were observed on separate volumes.
+  RabbitMQ state, private keys/real host assets, an intentional failed upgrade,
+  and the helper's full restore path remain open; see the G5 tracker record.
 - [ ] G6: Verify the exact production Compose project and DB/RabbitMQ volumes;
   prove no fresh-bootstrap/reset path is used for migrated data.
 - [ ] G7: Verify production secret/TLS controls, health/monitoring, retention,
@@ -162,8 +164,9 @@ end-to-end acceptance gates remain open until their evidence is recorded:
 
 See the [acceptance matrix and evidence requirements](./End-to-end-migration-acceptance.md).
 Until all required gates pass, use the status: **Alpine image implementation
-validated for the recorded releases; the G4 Ubuntu-data rehearsal passed, but
-production migration, recovery, and owner approval remain pending.**
+validated for the recorded releases; the G4 Ubuntu-data rehearsal passed and
+the G5 database recovery path is partially validated, but full production
+recovery and owner approval remain pending.**
 
 ## Current review changes
 

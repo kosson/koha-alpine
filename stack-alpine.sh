@@ -870,6 +870,10 @@ create_backup_bundle() {
   cp "${KOHA_ENV_FILE}" "${stage_dir}/config/env.env"
   cp "${TRAEFIK_DIR}/.env" "${stage_dir}/config/traefik.env"
   cp "${OPENSEARCH_DIR}/.env" "${stage_dir}/config/opensearch.env"
+  chmod 0600 \
+    "${stage_dir}/config/env.env" \
+    "${stage_dir}/config/traefik.env" \
+    "${stage_dir}/config/opensearch.env"
 
   cat > "${stage_dir}/manifest.txt" <<EOF
 created_at_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -885,8 +889,14 @@ EOF
     --single-transaction --routines --triggers --events "${DB_NAME}" \
     | gzip -9 > "${stage_dir}/database/${DB_NAME}.sql.gz"
 
+  chmod 0700 "${stage_dir}/config" "${stage_dir}/database"
+  chmod 0600 \
+    "${stage_dir}/manifest.txt" \
+    "${stage_dir}/database/${DB_NAME}.sql.gz"
+
   log "Packing backup archive at ${output_path}..."
-  tar -C "${stage_dir}" -czf "${output_path}" .
+  ( umask 077; tar -C "${stage_dir}" -czf "${output_path}" . )
+  chmod 0600 "${output_path}"
 
   rm -rf "${stage_dir}"
   trap - RETURN
@@ -928,6 +938,7 @@ restore_backup_bundle() {
   cp "${stage_dir}/config/env.env" "${KOHA_ENV_FILE}"
   cp "${stage_dir}/config/traefik.env" "${TRAEFIK_DIR}/.env"
   cp "${stage_dir}/config/opensearch.env" "${OPENSEARCH_DIR}/.env"
+  chmod 0600 "${KOHA_ENV_FILE}" "${TRAEFIK_DIR}/.env" "${OPENSEARCH_DIR}/.env"
 
   reload_runtime_config
   if [[ "${KOHA_IMAGE_MODE}" == "dev" ]]; then

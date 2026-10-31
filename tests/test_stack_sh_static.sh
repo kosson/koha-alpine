@@ -48,7 +48,14 @@ assert_contains "backup root is defined" 'BACKUP_ROOT="${SCRIPT_DIR}/backups"'
 assert_contains "backup command supports --output" "--output)"
 assert_contains "restore command supports --input" "--input)"
 assert_contains "backup uses mysqldump" 'mysqldump -uroot -p"${KOHA_DB_ROOT_PASSWORD}"'
+assert_contains "backup archive is created with a restrictive umask" '( umask 077; tar -C "${stage_dir}" -czf "${output_path}" . )'
+assert_contains "backup archive permissions are restricted" 'chmod 0600 "${output_path}"'
+assert_contains "backup configuration copies are restricted" 'chmod 0600 \'
+assert_contains "backup staging directories are restricted" 'chmod 0700 "${stage_dir}/config" "${stage_dir}/database"'
+assert_contains "backup database dump permissions are restricted" '"${stage_dir}/database/${DB_NAME}.sql.gz"'
+assert_contains "backup manifest permissions are restricted" '"${stage_dir}/manifest.txt"'
 assert_contains "restore imports the dump" 'gzip -dc "${stage_dir}/database/${DB_NAME}.sql.gz"'
+assert_contains "restored configuration permissions are restricted" 'chmod 0600 "${KOHA_ENV_FILE}" "${TRAEFIK_DIR}/.env" "${OPENSEARCH_DIR}/.env"'
 assert_contains "restore starts Traefik" "start_traefik"
 assert_contains "restore starts Koha" "start_koha"
 assert_contains "stack script probes for populated DB before no-fresh-db shortcut" 'koha_db_has_systempreferences()'
