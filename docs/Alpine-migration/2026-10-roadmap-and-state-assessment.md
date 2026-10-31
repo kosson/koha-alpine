@@ -156,8 +156,10 @@ end-to-end acceptance gates remain open until their evidence is recorded:
   failed-rollback scenario, the real `restore` command and OpenSearch rebuild
   were verified on isolated resources. Production asset inventory and RTO/RPO
   sign-off remain for G7/G9; see the G5 tracker record.
-- [ ] G6: Verify the exact production Compose project and DB/RabbitMQ volumes;
-  prove no fresh-bootstrap/reset path is used for migrated data.
+- [x] G6: **PASS - rehearsal (2026-10-31).** `stack-alpine.sh` refuses an empty
+  version-named volume pair when sibling `koha-prod-*` data exists, verifies
+  running mounts, adds a `volumes` command, and requires the typed project name
+  for `start`/`restart`/`reset` on a populated production DB.
 - [ ] G7: Verify production secret/TLS controls, health/monitoring, retention,
   capacity, and operational ownership.
 - [ ] G8: Complete an independent operator walkthrough of the updated runbook.

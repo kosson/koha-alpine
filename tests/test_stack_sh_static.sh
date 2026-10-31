@@ -85,6 +85,11 @@ assert_contains "version-specific production project remains the default" 'KOHA_
 assert_contains "main Koha env file can be selected outside the repository" 'KOHA_ENV_FILE="${KOHA_ENV_FILE:-${SCRIPT_DIR}/env/.env}"'
 assert_contains "container env file defaults to selected host env file" 'KOHA_CONTAINER_ENV_FILE="${KOHA_CONTAINER_ENV_FILE:-$(_env_val "${KOHA_ENV_FILE}" KOHA_CONTAINER_ENV_FILE "${KOHA_ENV_FILE}")}"'
 assert_not_contains "startup does not rewrite tracked SYNC_REPO configuration" 'perl -pi -e "s|^SYNC_REPO='
+assert_contains "prod refuses an empty volume pair when sibling data exists" 'guard_prod_volume_identity()'
+assert_contains "new production volumes need explicit acceptance" 'KOHA_ACCEPT_NEW_VOLUMES'
+assert_contains "running mounts are verified against expected volumes" 'verify_running_volume_identity()'
+assert_contains "destructive prod actions need the typed project name" 'confirm_prod_destructive()'
+assert_contains "volume identity command exists" 'volumes)'
 
 echo ""
 echo "1..${_N}"

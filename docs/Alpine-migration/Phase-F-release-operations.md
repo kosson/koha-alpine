@@ -132,6 +132,23 @@ pass the same name with `docker compose --project-name`.
 Never use `docker compose down -v`, `stack-alpine.sh reset`, or volume-prune
 commands as part of routine release or rollback.
 
+### Volume identity guards (G6)
+
+- `./stack-alpine.sh volumes --image-mode prod` prints the selected project and
+  its DB/RabbitMQ volumes (exists/absent, creation time) plus sibling
+  `koha-prod-*` projects that own data. Run it before every upgrade.
+- If the selected project has no DB volume but a sibling `koha-prod-*` project
+  does, `start`/`restart` refuse. Pin `KOHA_PROD_PROJECT` to the existing
+  project, or set `KOHA_ACCEPT_NEW_VOLUMES=yes` for a deliberate new deployment.
+- After `start`, `restart` and `restore`, the helper verifies the running
+  containers mount exactly the expected volumes and aborts on mismatch.
+- On a populated production DB, `start` and `restart` without `--no-fresh-db`,
+  and `reset`, require typing the exact Compose project name. (`restart`
+  previously dropped the database without any prompt.) For upgrades always use
+  `--no-fresh-db`.
+- In prod mode with `--no-fresh-db` the helper may log "bootstrap marker
+  missing"; this is harmless, as the container decides by inspecting the DB.
+
 ## Pre-deployment backup and upgrade
 
 Run upgrades in a planned maintenance window. Take the backup before changing

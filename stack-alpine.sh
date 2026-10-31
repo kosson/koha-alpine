@@ -554,6 +554,88 @@ koha_bootstrap_marker_present() {
 }
 
 # ---------------------------------------------------------------------------
+# Volume identity (G6): make the selected Compose project and its data volumes
+# explicit, and refuse destructive or silently-empty outcomes in prod mode.
+# ---------------------------------------------------------------------------
+shared_services_managed() {
+  [[ "${KOHA_MANAGE_SHARED_SERVICES:-yes}" != "no" ]]
+}
+
+koha_db_volume_name()  { echo "${KOHA_COMPOSE_PROJECT}_koha-db-data"; }
+koha_mq_volume_name()  { echo "${KOHA_COMPOSE_PROJECT}_koha-rabbitmq-data"; }
+
+# Other default-scheme production projects that already own a database volume.
+sibling_prod_projects() {
+  docker volume ls -q 2>/dev/null \
+    | sed -n 's/^\(koha-prod-.*\)_koha-db-data$/\1/p' \
+    | grep -vxF -- "${KOHA_COMPOSE_PROJECT}" || true
+}
+
+show_volume_identity() {
+  local vol
+  hdr "Volume identity"
+  log "Compose project : ${KOHA_COMPOSE_PROJECT} (mode: ${KOHA_IMAGE_MODE})"
+  for vol in "$(koha_db_volume_name)" "$(koha_mq_volume_name)"; do
+    if docker volume inspect "${vol}" >/dev/null 2>&1; then
+      log "Volume (exists) : ${vol} (created $(docker volume inspect -f '{{.CreatedAt}}' "${vol}"))"
+    else
+      log "Volume (absent) : ${vol} (will be created empty on first start)"
+    fi
+  done
+  local siblings; siblings="$(sibling_prod_projects)"
+  if [[ -n "${siblings}" ]]; then
+    log "Other koha-prod-* projects owning a database volume:"
+    while IFS= read -r vol; do log "  - ${vol}"; done <<< "${siblings}"
+  fi
+}
+
+# Version-specific default project names turn an upgrade into an empty
+# deployment. Refuse unless the operator confirms a genuinely new deployment.
+guard_prod_volume_identity() {
+  [[ "${KOHA_IMAGE_MODE}" == "prod" ]] || return 0
+  show_volume_identity
+  if docker volume inspect "$(koha_db_volume_name)" >/dev/null 2>&1; then
+    return 0
+  fi
+  local siblings; siblings="$(sibling_prod_projects)"
+  [[ -n "${siblings}" ]] || return 0
+  if [[ "${KOHA_ACCEPT_NEW_VOLUMES:-no}" == "yes" ]]; then
+    warn "KOHA_ACCEPT_NEW_VOLUMES=yes: creating a new empty deployment next to: $(echo "${siblings}" | tr '\n' ' ')"
+    return 0
+  fi
+  die "Project '${KOHA_COMPOSE_PROJECT}' has no database volume, but existing production data was found in project(s): $(echo "${siblings}" | tr '\n' ' ').
+           This usually means the Koha version changed while KOHA_PROD_PROJECT is unset, which selects an EMPTY volume pair.
+           To upgrade in place, set KOHA_PROD_PROJECT to the exact existing project name. For a deliberate new deployment, set KOHA_ACCEPT_NEW_VOLUMES=yes."
+}
+
+# After start, prove the running containers use exactly the expected volumes.
+verify_running_volume_identity() {
+  local container expected mount actual
+  for pair in "${DB_CONTAINER}|/var/lib/mysql|$(koha_db_volume_name)" \
+              "${KOHA_COMPOSE_PROJECT}-rabbitmq-1|/var/lib/rabbitmq|$(koha_mq_volume_name)"; do
+    container="${pair%%|*}"; pair="${pair#*|}"; mount="${pair%%|*}"; expected="${pair#*|}"
+    actual="$(docker inspect -f "{{range .Mounts}}{{if eq .Destination \"${mount}\"}}{{.Name}}{{end}}{{end}}" "${container}" 2>/dev/null || true)"
+    if [[ "${actual}" != "${expected}" ]]; then
+      die "Volume identity mismatch: ${container} mounts '${actual:-<none>}' at ${mount}, expected '${expected}'."
+    fi
+    ok "Verified ${container}:${mount} -> ${actual}"
+  done
+}
+
+# Production data is only wiped after the operator types the exact project name.
+confirm_prod_destructive() {
+  local action="$1" answer
+  warn "PRODUCTION project '${KOHA_COMPOSE_PROJECT}': ${action}"
+  warn "This permanently destroys data in $(koha_db_volume_name)."
+  read -rp "Type the Compose project name '${KOHA_COMPOSE_PROJECT}' to proceed: " answer || answer=""
+  if [[ "${answer}" != "${KOHA_COMPOSE_PROJECT}" ]]; then
+    log "Cancelled. Nothing was changed."
+    return 1
+  fi
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # Docker network
 # Create the frontend network. Used for the main Koha + Traefik paths.
 ensure_frontend_network() {
@@ -1032,7 +1114,8 @@ restore_backup_bundle() {
   archive_path="${RESTORE_ARCHIVE}"
   [[ -f "${archive_path}" ]] || die "Backup archive not found: ${archive_path}"
 
-  warn "This will overwrite env/.env, traefik/.env and OpenSearch-3.6/.env, then recreate '${DB_NAME}'."
+  show_volume_identity
+  warn "This will overwrite env/.env, traefik/.env and OpenSearch-3.6/.env, then recreate '${DB_NAME}' in project '${KOHA_COMPOSE_PROJECT}'."
   warn "Any running containers should be stopped before restoring."
   echo ""
   read -rp "Type 'restore' to continue: " answer
@@ -1102,6 +1185,7 @@ restore_backup_bundle() {
 
   export USE_EXISTING_DB=yes
   start_koha
+  verify_running_volume_identity
   configure_koha_languages
 
   rm -rf "${stage_dir}"
@@ -1121,6 +1205,10 @@ stop_support_services() {
 }
 
 reset_all() {
+  if [[ "${KOHA_IMAGE_MODE}" == "prod" ]]; then
+    show_volume_identity
+    confirm_prod_destructive "'reset' removes this project's containers AND volumes." || return 0
+  fi
   warn "This will stop ALL containers, remove them, and delete ALL named volumes."
   warn "Database data, OpenSearch indices, and Traefik state will be permanently lost."
   warn "Docker images will be preserved."
@@ -1258,6 +1346,7 @@ ${BOLD}Commands:${RESET}
   latest-tag  Show the latest upstream Koha tag; --apply [<tag>] writes it to env/.env
   backup      Create a tar.gz backup bundle for env files + MariaDB data
   restore     Restore env files + MariaDB data from a backup bundle
+  volumes     Show the Compose project and the exact data volumes it selects
 
 ${BOLD}Options for 'start' and 'build':${RESET}
   --image-mode <dev|prod>
@@ -1266,6 +1355,10 @@ ${BOLD}Options for 'start' and 'build':${RESET}
   --koha-ref <ref>      Production git ref/tag/commit (for example v26.11.00)
   KOHA_PROD_PROJECT     Optional stable production Compose project name.
                         Defaults to a version-specific project when unset.
+  KOHA_ACCEPT_NEW_VOLUMES=yes
+                        Allow prod start to create a new empty deployment even
+                        though other koha-prod-* projects own data (the guard
+                        otherwise refuses; see 'volumes').
   KOHA_ENV_FILE          Host-side Koha configuration path (default: env/.env).
   KOHA_CONTAINER_ENV_FILE
                         Koha container env file (defaults to KOHA_ENV_FILE).
@@ -1354,7 +1447,7 @@ ALPINE_BOOTSTRAP_PROFILE="$(_env_val "${KOHA_ENV_FILE}" ALPINE_BOOTSTRAP_PROFILE
 # Parse command (first positional arg)
 if [[ $# -gt 0 ]]; then
   case "$1" in
-    start|stop|restart|reset|status|logs|build|backup|restore|tls-client-cert|latest-tag) COMMAND="$1"; shift ;;
+    start|stop|restart|reset|status|logs|build|backup|restore|volumes|tls-client-cert|latest-tag) COMMAND="$1"; shift ;;
     --help|-h) usage; exit 0 ;;
     --*) : ;;  # no subcommand given, use default "start"
     *) die "Unknown command: '$1'. Run '$(basename "$0") --help' for usage." ;;
@@ -1447,24 +1540,31 @@ case "${COMMAND}" in
     fi
 
     check_prereqs
+    guard_prod_volume_identity
     [[ "${PREPARE_DB_CLIENT_TLS}" == true ]] && prepare_mariadb_client_tls
     if [[ "${KOHA_IMAGE_MODE}" == "dev" ]]; then
       ensure_koha_source
     fi
     [[ "${BUILD_OPENSEARCH}" == true ]] && build_opensearch
     [[ "${BUILD_KOHA}"       == true ]] && build_koha
-    ensure_opensearch_certs
-    start_traefik
-    start_opensearch
-    wait_opensearch_green
-    ensure_opensearch_auth
-    start_opensearch_dashboards
+    if shared_services_managed; then
+      ensure_opensearch_certs
+      start_traefik
+      start_opensearch
+      wait_opensearch_green
+      ensure_opensearch_auth
+      start_opensearch_dashboards
+    else
+      log "KOHA_MANAGE_SHARED_SERVICES=no: shared Traefik/OpenSearch left untouched."
+    fi
     start_support_services
     wait_db_ready
     if [[ "${FRESH_DB}" == true ]]; then
       # Warn the user if the database already contains Koha data — an accidental
       # plain 'start' after a machine reboot would silently wipe everything.
-      if koha_db_has_systempreferences; then
+      if koha_db_has_systempreferences && [[ "${KOHA_IMAGE_MODE}" == "prod" ]]; then
+        confirm_prod_destructive "'start' would DROP and recreate database '${DB_NAME}'. Use --no-fresh-db to keep it." || exit 0
+      elif koha_db_has_systempreferences; then
         echo ""
         warn "Database '${DB_NAME}' already contains Koha data."
         warn "Proceeding will DROP and recreate it — ALL DATA WILL BE PERMANENTLY LOST."
@@ -1504,6 +1604,7 @@ case "${COMMAND}" in
     fi
     export ALPINE_BOOTSTRAP_PROFILE
     start_koha
+    verify_running_volume_identity
     configure_koha_languages
     echo ""
     log "Koha container is running and initialising."
@@ -1513,8 +1614,10 @@ case "${COMMAND}" in
   stop)
     stop_koha
     stop_support_services
-    stop_opensearch
-    stop_traefik
+    if shared_services_managed; then
+      stop_opensearch
+      stop_traefik
+    fi
     ok "All services stopped."
     ;;
 
@@ -1528,10 +1631,14 @@ case "${COMMAND}" in
     if [[ "${KOHA_IMAGE_MODE}" == "dev" ]]; then
       ensure_koha_source
     fi
+    guard_prod_volume_identity
     hdr "Quick restart (OpenSearch stays up)"
     warn "Assumes OpenSearch cluster is already running and green."
     wait_db_ready
     if [[ "${FRESH_DB}" == true ]]; then
+      if [[ "${KOHA_IMAGE_MODE}" == "prod" ]] && koha_db_has_systempreferences; then
+        confirm_prod_destructive "'restart' would DROP and recreate database '${DB_NAME}'. Use --no-fresh-db to keep it." || exit 0
+      fi
       reset_database
     elif koha_db_has_systempreferences; then
       export USE_EXISTING_DB=yes
@@ -1554,6 +1661,7 @@ case "${COMMAND}" in
     fi
     export ALPINE_BOOTSTRAP_PROFILE
     start_koha
+    verify_running_volume_identity
     configure_koha_languages
     [[ "${FOLLOW_LOGS}" == true ]] && follow_logs
     ;;
@@ -1589,6 +1697,10 @@ case "${COMMAND}" in
   restore)
     check_prereqs
     restore_backup_bundle
+    ;;
+
+  volumes)
+    show_volume_identity
     ;;
 
   tls-client-cert)
